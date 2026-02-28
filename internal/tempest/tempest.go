@@ -156,7 +156,9 @@ func transcribeElevenLabs(ctx context.Context, baseURL, audioPath string) (strin
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 	if _, err := io.Copy(fw, f); err != nil {
 		return "", err
 	}
@@ -175,7 +177,9 @@ func transcribeElevenLabs(ctx context.Context, baseURL, audioPath string) (strin
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("stt http %d: %s", resp.StatusCode, string(body))
@@ -212,7 +216,9 @@ func synthesizeElevenLabs(ctx context.Context, baseURL, voice, text string) (str
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	data, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("tts http %d: %s", resp.StatusCode, string(data))

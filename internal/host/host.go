@@ -227,7 +227,9 @@ func statePath() (string, error) {
 }
 
 func streamLogs(r io.ReadCloser, prefix string, onURL func(string)) {
-	defer r.Close()
+	defer func() {
+		_ = r.Close()
+	}()
 	s := bufio.NewScanner(r)
 	for s.Scan() {
 		line := s.Text()

@@ -203,7 +203,9 @@ func (c *Client) call(ctx context.Context, method string, params map[string]any,
 	if err != nil {
 		return nil, 0, nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, resp.StatusCode, resp.Header, err

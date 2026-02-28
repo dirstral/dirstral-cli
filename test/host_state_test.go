@@ -11,7 +11,11 @@ func TestHostStateRoundTrip(t *testing.T) {
 	if err := host.SaveState(s); err != nil {
 		t.Fatalf("save state: %v", err)
 	}
-	defer host.ClearState()
+	defer func() {
+		if err := host.ClearState(); err != nil {
+			t.Errorf("clear state: %v", err)
+		}
+	}()
 
 	loaded, err := host.LoadState()
 	if err != nil {
