@@ -118,6 +118,7 @@ func TestMenuViewIncludesHelpHint(t *testing.T) {
 	}
 }
 
+// TestMenuHelpOverlayToggle ensures '?' toggles the shared menu keymap overlay.
 func TestMenuHelpOverlayToggle(t *testing.T) {
 	m := app.NewMenuModel(app.StartMenuConfig())
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 28})
@@ -136,6 +137,7 @@ func TestMenuHelpOverlayToggle(t *testing.T) {
 	}
 }
 
+// TestMenuHelpOverlayBlocksEnterSelection ensures Enter is ignored while overlay is open.
 func TestMenuHelpOverlayBlocksEnterSelection(t *testing.T) {
 	m := app.NewMenuModel(app.StartMenuConfig())
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 28})
@@ -154,6 +156,7 @@ func TestMenuHelpOverlayBlocksEnterSelection(t *testing.T) {
 	}
 }
 
+// TestMenuHelpOverlayCtrlKToggle ensures Ctrl+K toggles the shared menu keymap overlay.
 func TestMenuHelpOverlayCtrlKToggle(t *testing.T) {
 	m := app.NewMenuModel(app.StartMenuConfig())
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 28})

@@ -26,6 +26,7 @@ func TestLighthouseMenuControlsAreKeyboardFirst(t *testing.T) {
 	}
 }
 
+// TestLighthouseMenuHelpOverlayToggleVisibility verifies help visibility toggles in Lighthouse menu.
 func TestLighthouseMenuHelpOverlayToggleVisibility(t *testing.T) {
 	m := app.NewMenuModel(app.LighthouseMenuConfig())
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 28})

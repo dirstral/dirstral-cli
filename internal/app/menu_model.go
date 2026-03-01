@@ -239,6 +239,7 @@ func (m MenuModel) View() string {
 	return lipgloss.Place(viewWidth, m.height, lipgloss.Center, lipgloss.Center, content)
 }
 
+// menuHelpText renders the shared menu keymap panel with screen context.
 func menuHelpText(width int, screenTitle string) string {
 	title := strings.TrimSpace(screenTitle)
 	if title == "" {

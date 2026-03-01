@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// updateBreezeModel applies a tea message and type-asserts the next model.
 func updateBreezeModel(t *testing.T, m breezeModel, msg tea.Msg) (breezeModel, tea.Cmd) {
 	t.Helper()
 	next, cmd := m.Update(msg)
@@ -19,14 +20,17 @@ func updateBreezeModel(t *testing.T, m breezeModel, msg tea.Msg) (breezeModel, t
 	return bm, cmd
 }
 
+// keyMsg builds a rune-based key message for tests.
 func keyMsg(r rune) tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
 }
 
+// ctrlKMsg builds a Ctrl+K key message for help-overlay tests.
 func ctrlKMsg() tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyCtrlK}
 }
 
+// TestWindowSizeMsgAppliesMinimumViewportAndInputWidth validates baseline resize math.
 func TestWindowSizeMsgAppliesMinimumViewportAndInputWidth(t *testing.T) {
 	m := breezeModel{
 		textInput: textinput.New(),
@@ -61,6 +65,7 @@ func TestWindowSizeMsgAppliesMinimumViewportAndInputWidth(t *testing.T) {
 	}
 }
 
+// TestQuestionMarkTogglesHelpAndBlocksNormalProcessing validates '?' overlay behavior.
 func TestQuestionMarkTogglesHelpAndBlocksNormalProcessing(t *testing.T) {
 	m := breezeModel{
 		textInput: textinput.New(),
@@ -99,6 +104,7 @@ func TestQuestionMarkTogglesHelpAndBlocksNormalProcessing(t *testing.T) {
 	}
 }
 
+// TestCtrlKTogglesHelpAndBlocksNormalProcessing validates Ctrl+K parity with '?'.
 func TestCtrlKTogglesHelpAndBlocksNormalProcessing(t *testing.T) {
 	m := breezeModel{
 		textInput: textinput.New(),
@@ -137,6 +143,7 @@ func TestCtrlKTogglesHelpAndBlocksNormalProcessing(t *testing.T) {
 	}
 }
 
+// TestHelpOverlayCanBeClosedWithEitherToggleKey validates mixed-key open/close flows.
 func TestHelpOverlayCanBeClosedWithEitherToggleKey(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -182,6 +189,7 @@ func TestHelpOverlayCanBeClosedWithEitherToggleKey(t *testing.T) {
 	}
 }
 
+// TestViewIncludesHelpHintText ensures discoverability hint is always rendered.
 func TestViewIncludesHelpHintText(t *testing.T) {
 	m := breezeModel{
 		viewport:  viewport.New(40, 10),

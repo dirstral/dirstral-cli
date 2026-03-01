@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// TestTempestUpdateWindowSizeAppliesSafeMinimumViewport verifies minimum viewport bounds.
 func TestTempestUpdateWindowSizeAppliesSafeMinimumViewport(t *testing.T) {
 	m := initialModel(context.Background(), nil, Options{MCPURL: "http://example.com"})
 
@@ -31,6 +32,7 @@ func TestTempestUpdateWindowSizeAppliesSafeMinimumViewport(t *testing.T) {
 	}
 }
 
+// TestTempestHelpToggleParityWithCtrlKAndEnterBlockedWhenOpen verifies toggle-key parity and input blocking.
 func TestTempestHelpToggleParityWithCtrlKAndEnterBlockedWhenOpen(t *testing.T) {
 	m := initialModel(context.Background(), nil, Options{MCPURL: "http://example.com"})
 
@@ -71,6 +73,7 @@ func TestTempestHelpToggleParityWithCtrlKAndEnterBlockedWhenOpen(t *testing.T) {
 	}
 }
 
+// TestTempestViewIncludesHelpHintText ensures the help discoverability hint is visible.
 func TestTempestViewIncludesHelpHintText(t *testing.T) {
 	m := initialModel(context.Background(), nil, Options{MCPURL: "http://example.com"})
 
