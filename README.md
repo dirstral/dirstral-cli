@@ -47,6 +47,59 @@ dirstral
 
 Then select a mode from the startup screen.
 
+## Breeze JSON mode
+
+Use JSON mode when you want machine-friendly output instead of interactive TUI output:
+
+```bash
+dirstral breeze --json --mcp http://127.0.0.1:8087/mcp
+```
+
+JSON mode emits one NDJSON event per line with a stable envelope:
+
+```json
+{"version":"v1","type":"<event_type>","data":{...}}
+```
+
+Envelope contract (`v1`):
+
+- `version` (string, required): schema version. Current value is `v1`.
+- `type` (string, required): event type.
+- `data` (object, required): event payload for the given type.
+
+Known event types:
+
+- `session`: first event for each run.
+  - `data.mcp_url` (string)
+  - `data.transport` (string)
+  - `data.model` (string)
+  - `data.session_id` (string)
+- `tool_result`: successful tool execution.
+  - `data.tool` (string)
+  - `data.args` (object)
+  - `data.is_error` (boolean)
+  - `data.output` (string)
+  - `data.citations` (array of strings)
+  - `data.structured_content` (object)
+- `help`: emitted for `/help`.
+  - `data.text` (string)
+- `approval_required`: emitted when a tool is not auto-approved.
+  - `data.tool` (string)
+  - `data.approved` (boolean, currently `false`)
+- `error`: parse or execution failure.
+  - `data.message` (string)
+  - `data.tool` (string, optional)
+- `exit`: emitted before loop exits (for `/quit` or `/exit`).
+  - `data.reason` (string, currently `user`)
+
+Citation format:
+
+- `tool_result.data.citations` is a list of rendered citation strings (for example `src/main.go:3-9` or page spans).
+
+Compatibility note:
+
+- Consumers should branch on `version`. New event/data fields may be added in a backward-compatible way, but `version: "v1"` envelope keys remain stable.
+
 ## Config precedence
 
 `dirstral` loads configuration in this order:

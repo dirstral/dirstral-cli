@@ -13,6 +13,36 @@ import (
 	"github.com/alibilge/dirstral-cli/internal/mcp"
 )
 
+func decodeEvents(t *testing.T, data []byte) []map[string]any {
+	t.Helper()
+	s := bufio.NewScanner(bytes.NewReader(data))
+	events := make([]map[string]any, 0)
+	for s.Scan() {
+		var evt map[string]any
+		if err := json.Unmarshal(s.Bytes(), &evt); err != nil {
+			t.Fatalf("invalid json line: %v", err)
+		}
+		events = append(events, evt)
+	}
+	if err := s.Err(); err != nil {
+		t.Fatalf("scanner: %v", err)
+	}
+	return events
+}
+
+func assertEventEnvelope(t *testing.T, evt map[string]any) {
+	t.Helper()
+	if evt["version"] != "v1" {
+		t.Fatalf("unexpected version in event: %#v", evt)
+	}
+	if _, ok := evt["type"].(string); !ok {
+		t.Fatalf("event type must be string: %#v", evt)
+	}
+	if _, ok := evt["data"].(map[string]any); !ok {
+		t.Fatalf("event data must be object: %#v", evt)
+	}
+}
+
 func TestAskTopKForModel(t *testing.T) {
 	if got := breeze.AskTopKForModel("mistral-large-latest"); got != 12 {
 		t.Fatalf("unexpected top-k for large model: %d", got)
@@ -93,20 +123,12 @@ func TestBreezeJSONOutputStructureAndModelPropagation(t *testing.T) {
 		t.Fatalf("expected ask k=12 from model profile, got %v", askK)
 	}
 
-	s := bufio.NewScanner(bytes.NewReader(out.Bytes()))
-	events := make([]map[string]any, 0)
-	for s.Scan() {
-		var evt map[string]any
-		if err := json.Unmarshal(s.Bytes(), &evt); err != nil {
-			t.Fatalf("invalid json line: %v", err)
-		}
-		events = append(events, evt)
-	}
-	if err := s.Err(); err != nil {
-		t.Fatalf("scanner: %v", err)
-	}
+	events := decodeEvents(t, out.Bytes())
 	if len(events) < 3 {
 		t.Fatalf("expected at least 3 events, got %d", len(events))
+	}
+	for _, evt := range events {
+		assertEventEnvelope(t, evt)
 	}
 	if events[0]["version"] != "v1" || events[0]["type"] != "session" {
 		t.Fatalf("unexpected first event: %#v", events[0])
@@ -129,5 +151,74 @@ func TestBreezeJSONOutputStructureAndModelPropagation(t *testing.T) {
 	citations, _ := data["citations"].([]any)
 	if len(citations) == 0 {
 		t.Fatalf("expected citations in tool_result")
+	}
+}
+
+func TestBreezeJSONHelpErrorAndExitEvents(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			_ = r.Body.Close()
+		}()
+		var req map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		method, _ := req["method"].(string)
+		switch method {
+		case "initialize":
+			w.Header().Set("MCP-Session-Id", "sess-test")
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req["id"], "result": map[string]any{}})
+		case "notifications/initialized":
+			w.WriteHeader(http.StatusAccepted)
+		default:
+			t.Fatalf("unexpected method: %s", method)
+		}
+	}))
+	defer server.Close()
+
+	client := mcp.New(server.URL, false)
+	if err := client.Initialize(context.Background()); err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+
+	in := bytes.NewBufferString("/help\n/open\n/quit\n")
+	out := &bytes.Buffer{}
+	opts := breeze.Options{MCPURL: server.URL, Transport: "streamable-http", Model: "mistral-small-latest", JSON: true}
+	if err := breeze.RunJSONLoopWithIO(context.Background(), client, opts, in, out); err != nil {
+		t.Fatalf("json loop: %v", err)
+	}
+
+	events := decodeEvents(t, out.Bytes())
+	if len(events) != 4 {
+		t.Fatalf("expected exactly 4 events (session/help/error/exit), got %d", len(events))
+	}
+	for _, evt := range events {
+		assertEventEnvelope(t, evt)
+	}
+
+	if events[0]["type"] != "session" {
+		t.Fatalf("expected first event type=session, got %v", events[0]["type"])
+	}
+	if events[1]["type"] != "help" {
+		t.Fatalf("expected second event type=help, got %v", events[1]["type"])
+	}
+	if events[2]["type"] != "error" {
+		t.Fatalf("expected third event type=error, got %v", events[2]["type"])
+	}
+	if events[3]["type"] != "exit" {
+		t.Fatalf("expected final event type=exit, got %v", events[3]["type"])
+	}
+
+	helpData, _ := events[1]["data"].(map[string]any)
+	if _, ok := helpData["text"].(string); !ok {
+		t.Fatalf("help event missing text field: %#v", events[1])
+	}
+	errData, _ := events[2]["data"].(map[string]any)
+	if _, ok := errData["message"].(string); !ok {
+		t.Fatalf("error event missing message field: %#v", events[2])
+	}
+	exitData, _ := events[3]["data"].(map[string]any)
+	if exitData["reason"] != "user" {
+		t.Fatalf("expected exit reason=user, got %#v", events[3])
 	}
 }
