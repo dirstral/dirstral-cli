@@ -1,2 +1,2 @@
-bin/
-dirstral
+# Build artifacts
+/bin/

@@ -19,6 +19,12 @@ make build
 make run
 ```
 
+Build artifact notes:
+
+- `make build` writes the binary to `bin/dirstral`.
+- `make run` uses `go run ./cmd/dirstral` and does not create a root `./dirstral` file.
+- Avoid `go build -o dirstral ./cmd/dirstral` unless you intentionally want a local root binary.
+
 Install globally so you can run `dirstral` directly:
 
 ```bash
