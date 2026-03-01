@@ -2,7 +2,6 @@ package tempest
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"strings"
 
@@ -22,6 +21,7 @@ const (
 	stateRecording
 	stateTranscribing
 	stateThinking
+	stateConfirming
 	stateSpeaking
 )
 
@@ -39,6 +39,10 @@ type tempestModel struct {
 	showHelp       bool
 	helpCache      string
 	helpCacheWidth int
+	pendingParsed  breeze.ParsedInput
+	hasPendingTool bool
+	parseInputFn   func(input, model string) breeze.ParsedInput
+	executeParsed  func(ctx context.Context, client *mcp.Client, parsed breeze.ParsedInput) (*breeze.ToolExecution, error)
 }
 
 const (
@@ -61,6 +65,10 @@ type thinkDoneMsg struct {
 	err    error
 }
 
+type approvalReqMsg struct {
+	parsed breeze.ParsedInput
+}
+
 type speakDoneMsg struct {
 	err error
 }
@@ -76,12 +84,14 @@ func initialModel(ctx context.Context, client *mcp.Client, opts Options) tempest
 	}
 
 	return tempestModel{
-		opts:     opts,
-		client:   client,
-		ctx:      ctx,
-		spinner:  s,
-		messages: msgs,
-		state:    stateIdle,
+		opts:          opts,
+		client:        client,
+		ctx:           ctx,
+		spinner:       s,
+		messages:      msgs,
+		state:         stateIdle,
+		parseInputFn:  breeze.ParseInput,
+		executeParsed: breeze.ExecuteParsed,
 	}
 }
 
@@ -99,6 +109,33 @@ func (m tempestModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if m.state == stateConfirming {
+			switch strings.ToLower(msg.String()) {
+			case "y":
+				if !m.hasPendingTool {
+					m.state = stateIdle
+					m.scrollToBottom()
+					return m, nil
+				}
+				m.messages = append(m.messages, ui.Brand.Render("Approving "+m.pendingParsed.Tool+"..."))
+				parsed := m.pendingParsed
+				m.pendingParsed = breeze.ParsedInput{}
+				m.hasPendingTool = false
+				m.state = stateThinking
+				m.scrollToBottom()
+				return m, tea.Batch(m.runParsedCmd(parsed), m.spinner.Tick)
+			case "n":
+				if m.hasPendingTool {
+					m.messages = append(m.messages, ui.Dim("Cancelled "+m.pendingParsed.Tool+"."))
+				}
+				m.pendingParsed = breeze.ParsedInput{}
+				m.hasPendingTool = false
+				m.state = stateIdle
+				m.scrollToBottom()
+				return m, nil
+			}
+		}
+
 		if msg.String() == "?" || msg.String() == "ctrl+k" {
 			m.showHelp = !m.showHelp
 			m.invalidateHelpCache()
@@ -150,6 +187,14 @@ func (m tempestModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = stateThinking
 		m.scrollToBottom()
 		return m, m.thinkCmd(msg.text)
+
+	case approvalReqMsg:
+		m.pendingParsed = msg.parsed
+		m.hasPendingTool = true
+		m.state = stateConfirming
+		m.messages = append(m.messages, ui.Yellow.Render("Approval required for ")+ui.Brand.Render(msg.parsed.Tool))
+		m.scrollToBottom()
+		return m, nil
 
 	case thinkDoneMsg:
 		if msg.err != nil {
@@ -213,6 +258,8 @@ func (m tempestModel) View() string {
 		status = ui.Yellow.Render(m.spinner.View() + " [⏳ Transcribing...]")
 	case stateThinking:
 		status = ui.Cyan.Render(m.spinner.View() + " [🧠 Asking dir2mcp...]")
+	case stateConfirming:
+		status = ui.Yellow.Render("[ Approval required: run " + m.pendingParsed.Tool + "? y/N ]")
 	case stateSpeaking:
 		status = ui.Green.Render(m.spinner.View() + " [🔊 Speaking...]")
 	}
@@ -336,11 +383,11 @@ func (m *tempestModel) transcribeCmd(path string) tea.Cmd {
 
 func (m *tempestModel) thinkCmd(question string) tea.Cmd {
 	return func() tea.Msg {
-		parsed := breeze.ParseInput(question, m.opts.Model)
-		if breeze.RequiresApproval(parsed.Tool) {
-			return thinkDoneMsg{err: mcpErrApprovalRequired(parsed.Tool)}
+		parsed := m.parseInputFn(question, m.opts.Model)
+		if parsed.Tool != "" && breeze.RequiresApproval(parsed.Tool) {
+			return approvalReqMsg{parsed: parsed}
 		}
-		execRes, err := breeze.ExecuteParsed(m.ctx, m.client, parsed)
+		execRes, err := m.executeParsed(m.ctx, m.client, parsed)
 		if err != nil {
 			return thinkDoneMsg{err: err}
 		}
@@ -348,8 +395,14 @@ func (m *tempestModel) thinkCmd(question string) tea.Cmd {
 	}
 }
 
-func mcpErrApprovalRequired(tool string) error {
-	return fmt.Errorf("tempest requires manual confirmation for tool %s; use breeze for interactive approval", tool)
+func (m *tempestModel) runParsedCmd(parsed breeze.ParsedInput) tea.Cmd {
+	return func() tea.Msg {
+		execRes, err := m.executeParsed(m.ctx, m.client, parsed)
+		if err != nil {
+			return thinkDoneMsg{err: err}
+		}
+		return thinkDoneMsg{answer: strings.TrimSpace(execRes.Output)}
+	}
 }
 
 func (m *tempestModel) speakCmd(text string) tea.Cmd {
