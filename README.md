@@ -25,6 +25,20 @@ Install globally so you can run `dirstral` directly:
 make install
 ```
 
+## Run smoke checks
+
+Run targeted end-to-end smoke tests (fake MCP processes, no real `dir2mcp` dependency):
+
+```bash
+go test -v -count=1 ./tests -run '^TestSmoke'
+```
+
+Run all tests:
+
+```bash
+go test -v ./...
+```
+
 ## Quick start
 
 1. Start dir2mcp host mode:
