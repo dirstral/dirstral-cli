@@ -1,0 +1,55 @@
+# Dirstral CLI Configuration
+# Copy this file to ~/.config/dirstral/config.toml and edit as needed.
+#
+# Config precedence (highest to lowest):
+#   1. Shell environment variables (DIRSTRAL_*, ELEVENLABS_*)
+#   2. .env.local (for secrets — not committed to git)
+#   3. .env
+#   4. ~/.config/dirstral/config.toml (this file)
+#   5. Built-in defaults
+
+# --- MCP Server Connection ---
+[mcp]
+# URL of the dir2mcp MCP endpoint.
+# If using Lighthouse mode, this is set automatically.
+url = "http://127.0.0.1:8087/mcp"
+
+# Transport protocol: "streamable-http" or "stdio".
+transport = "streamable-http"
+
+# --- Model ---
+# Mistral model used for RAG queries.
+# Options: "mistral-small-latest", "mistral-medium-latest", "mistral-large-latest"
+# Smaller models are faster; larger models produce more detailed answers.
+model = "mistral-small-latest"
+
+# Enable verbose logging (shows MCP request/response details).
+verbose = false
+
+# --- Lighthouse (Host Mode) ---
+[host]
+# Address for the locally managed dir2mcp server.
+listen = "127.0.0.1:8087"
+
+# MCP endpoint path.
+mcp_path = "/mcp"
+
+# --- ElevenLabs (Tempest Voice Mode) ---
+[elevenlabs]
+# ElevenLabs API base URL.
+base_url = "https://api.elevenlabs.io"
+
+# Voice ID or name for text-to-speech.
+# Browse voices at: https://elevenlabs.io/voice-library
+voice = "Rachel"
+
+# --- Secrets ---
+# Do NOT put API keys in this file. Use .env.local instead:
+#
+#   echo 'ELEVENLABS_API_KEY=your-key' >> .env.local
+#   echo 'DIR2MCP_AUTH_TOKEN=your-token' >> .env.local
+#
+# Or export them in your shell:
+#
+#   export ELEVENLABS_API_KEY=your-key
+#   export DIR2MCP_AUTH_TOKEN=your-token

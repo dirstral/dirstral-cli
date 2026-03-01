@@ -202,22 +202,42 @@ func playAudio(ctx context.Context, path string) error {
 }
 
 func preflight(opts Options) error {
+	var missing []string
+
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
-		return fmt.Errorf("ffmpeg is required for Tempest mic recording")
+		missing = append(missing, "ffmpeg (required for mic recording)")
 	}
 	if strings.TrimSpace(os.Getenv("ELEVENLABS_API_KEY")) == "" {
-		return fmt.Errorf("ELEVENLABS_API_KEY is required")
+		missing = append(missing, "ELEVENLABS_API_KEY environment variable")
 	}
-	if opts.Mute {
+	if !opts.Mute {
+		hasPlayer := false
+		if _, err := exec.LookPath("afplay"); err == nil {
+			hasPlayer = true
+		}
+		if _, err := exec.LookPath("ffplay"); err == nil {
+			hasPlayer = true
+		}
+		if !hasPlayer {
+			missing = append(missing, "audio player: afplay (macOS) or ffplay (Linux)")
+		}
+	}
+
+	if len(missing) == 0 {
 		return nil
 	}
-	if _, err := exec.LookPath("afplay"); err == nil {
-		return nil
+
+	var b strings.Builder
+	b.WriteString("Tempest requires the following to be available:\n")
+	for _, m := range missing {
+		b.WriteString("  - " + m + "\n")
 	}
-	if _, err := exec.LookPath("ffplay"); err == nil {
-		return nil
-	}
-	return fmt.Errorf("audio playback requires afplay (macOS) or ffplay")
+	b.WriteString("\nSetup hints:\n")
+	b.WriteString("  ffmpeg:           brew install ffmpeg (macOS) or apt install ffmpeg (Linux)\n")
+	b.WriteString("  ELEVENLABS_API_KEY: export ELEVENLABS_API_KEY=your-key (https://elevenlabs.io/app/settings/api-keys)\n")
+	b.WriteString("  audio player:     ffmpeg includes ffplay; macOS has afplay built-in\n")
+	b.WriteString("  mute mode:        use --mute to skip audio playback")
+	return fmt.Errorf("%s", b.String())
 }
 
 func resolveMacInputDevice(device string) (string, error) {

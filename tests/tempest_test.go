@@ -17,7 +17,11 @@ func TestTempestRunFailsFastWithoutAudioPrereqs(t *testing.T) {
 	}
 
 	msg := strings.ToLower(err.Error())
-	if !strings.Contains(msg, "ffmpeg is required") && !strings.Contains(msg, "elevenlabs_api_key is required") {
+	if !strings.Contains(msg, "tempest requires") {
 		t.Fatalf("unexpected tempest preflight error: %v", err)
+	}
+	// Verify the consolidated error lists missing dependencies
+	if !strings.Contains(msg, "ffmpeg") && !strings.Contains(msg, "elevenlabs_api_key") {
+		t.Fatalf("preflight error should mention missing dependencies: %v", err)
 	}
 }

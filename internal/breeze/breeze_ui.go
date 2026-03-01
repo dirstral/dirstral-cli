@@ -361,20 +361,49 @@ func renderResultString(tool string, res *mcp.ToolCallResult) string {
 
 func renderListFilesString(sc map[string]any) string {
 	files, _ := sc["files"].([]any)
+	total, _ := sc["total"].(float64)
 	if len(files) == 0 {
-		return ui.Dim("(no files)")
+		return ui.Dim("No files found.")
 	}
 	var b strings.Builder
+	if total > 0 {
+		b.WriteString(ui.Dim(fmt.Sprintf("Showing %d of %d files:\n", len(files), int(total))))
+	}
 	for i, f := range files {
-		if i >= 20 {
-			b.WriteString(ui.Dim("...\n"))
+		if i >= 30 {
+			remaining := len(files) - 30
+			b.WriteString(ui.Dim(fmt.Sprintf("  ... +%d more\n", remaining)))
 			break
 		}
 		m, ok := f.(map[string]any)
 		if !ok {
 			continue
 		}
-		fmt.Fprintf(&b, "  %s %s\n", ui.Cyan.Render(asString(m["rel_path"])), ui.Dim("("+asString(m["doc_type"])+")"))
+		path := asString(m["rel_path"])
+		docType := asString(m["doc_type"])
+		status := asString(m["status"])
+
+		icon := "  "
+		switch docType {
+		case "code":
+			icon = ui.Cyan.Render("  ")
+		case "md", "text":
+			icon = ui.Muted.Render("  ")
+		case "pdf":
+			icon = ui.Yellow.Render("  ")
+		case "audio":
+			icon = ui.Green.Render("  ")
+		case "image":
+			icon = ui.Brand.Render("  ")
+		}
+
+		line := fmt.Sprintf("%s%s %s", icon, ui.Cyan.Render(path), ui.Dim("("+docType+")"))
+		if status == "error" {
+			line += " " + ui.Red.Render("[error]")
+		} else if status == "skipped" {
+			line += " " + ui.Yellow.Render("[skipped]")
+		}
+		b.WriteString(line + "\n")
 	}
 	return b.String()
 }
@@ -382,11 +411,13 @@ func renderListFilesString(sc map[string]any) string {
 func renderSearchString(sc map[string]any) string {
 	hits, _ := sc["hits"].([]any)
 	if len(hits) == 0 {
-		return ui.Dim("(no hits)")
+		return ui.Dim("No results found. Try a different query or broader search terms.")
 	}
 	var b strings.Builder
 	for i, h := range hits {
 		if i >= 8 {
+			remaining := len(hits) - 8
+			b.WriteString(ui.Dim(fmt.Sprintf("  ... +%d more results\n", remaining)))
 			break
 		}
 		m, ok := h.(map[string]any)
@@ -400,9 +431,19 @@ func renderSearchString(sc map[string]any) string {
 		if span, ok := m["span"].(map[string]any); ok {
 			citation = mcp.CitationForSpan(path, span)
 		}
-		fmt.Fprintf(&b, "%s score=%s %s\n", ui.Brand.Render(fmt.Sprintf("%d)", i+1)), ui.Score(score), ui.Citation(citation))
+		if i > 0 {
+			b.WriteString(ui.Dim("  ───\n"))
+		}
+		fmt.Fprintf(&b, "  %s  %s  %s\n", ui.Brand.Render(fmt.Sprintf("#%d", i+1)), ui.Citation(citation), ui.Dim("score=")+ui.Score(score))
 		if snippet != "" {
-			fmt.Fprintf(&b, "   %s\n", ui.Muted.Render(snippet))
+			// Indent and wrap long snippets
+			lines := strings.Split(snippet, "\n")
+			for _, line := range lines {
+				trimmed := strings.TrimSpace(line)
+				if trimmed != "" {
+					fmt.Fprintf(&b, "     %s\n", ui.Muted.Render(trimmed))
+				}
+			}
 		}
 	}
 	return b.String()
@@ -411,11 +452,49 @@ func renderSearchString(sc map[string]any) string {
 func renderOpenFileString(sc map[string]any) string {
 	path := asString(sc["rel_path"])
 	content := asString(sc["content"])
+	docType := asString(sc["doc_type"])
+	truncated, _ := sc["truncated"].(bool)
+
 	var b strings.Builder
-	if span, ok := sc["span"].(map[string]any); ok {
-		b.WriteString(ui.Citation(mcp.CitationForSpan(path, span)) + "\n")
+
+	// Header with file info
+	header := ui.Citation(path)
+	if docType != "" {
+		header += " " + ui.Dim("("+docType+")")
 	}
-	b.WriteString(content)
+	if span, ok := sc["span"].(map[string]any); ok {
+		header = ui.Citation(mcp.CitationForSpan(path, span))
+		if docType != "" {
+			header += " " + ui.Dim("("+docType+")")
+		}
+	}
+	b.WriteString(header + "\n")
+	b.WriteString(ui.Dim("─────────────────────────────────────────") + "\n")
+
+	// Content with line numbers for code
+	if docType == "code" && content != "" {
+		lines := strings.Split(content, "\n")
+		startLine := 1
+		if span, ok := sc["span"].(map[string]any); ok {
+			if sl, ok := span["start_line"].(float64); ok {
+				startLine = int(sl)
+			}
+		}
+		for i, line := range lines {
+			lineNum := ui.Dim(fmt.Sprintf("%4d ", startLine+i))
+			b.WriteString(lineNum + line + "\n")
+		}
+	} else {
+		b.WriteString(content)
+		if !strings.HasSuffix(content, "\n") {
+			b.WriteString("\n")
+		}
+	}
+
+	b.WriteString(ui.Dim("─────────────────────────────────────────"))
+	if truncated {
+		b.WriteString("\n" + ui.Yellow.Render("⚠ Output truncated (file exceeds max_chars limit)"))
+	}
 	return b.String()
 }
 
@@ -424,14 +503,14 @@ func renderAskString(sc map[string]any) string {
 	answer := strings.TrimSpace(asString(sc["answer"]))
 	if answer != "" {
 		b.WriteString(answer + "\n")
+	} else {
+		// Fallback for stub/empty answers
+		b.WriteString(ui.Dim("(no answer generated — indexing may still be in progress)") + "\n")
 	}
 	if ordered := citationsFor("dir2mcp.ask", sc); len(ordered) > 0 {
-		if len(ordered) > 0 {
-			styled := make([]string, len(ordered))
-			for i, c := range ordered {
-				styled[i] = ui.Citation(c)
-			}
-			fmt.Fprintf(&b, "%s %s\n", ui.Dim("Sources:"), strings.Join(styled, ui.Dim(", ")))
+		b.WriteString("\n" + ui.Dim("───── Sources ─────") + "\n")
+		for i, c := range ordered {
+			fmt.Fprintf(&b, "  %s %s\n", ui.Dim(fmt.Sprintf("[%d]", i+1)), ui.Citation(c))
 		}
 	}
 	return strings.TrimSpace(b.String())
