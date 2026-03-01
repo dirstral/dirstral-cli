@@ -197,12 +197,8 @@ func (m tempestModel) View() string {
 	var b strings.Builder
 	b.WriteString(m.viewport.View())
 	b.WriteString("\n")
-	help := ""
 	if m.showHelp {
-		help = m.helpCache
-		if help == "" || m.helpCacheWidth != renderWidth {
-			help = renderHelp(renderWidth)
-		}
+		help := m.helpForWidth(renderWidth)
 		b.WriteString(help)
 		b.WriteString("\n")
 	}
