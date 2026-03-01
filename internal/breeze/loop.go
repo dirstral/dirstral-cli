@@ -11,10 +11,39 @@ import (
 )
 
 type ParsedInput struct {
-	Quit bool
-	Help bool
+	Quit  bool
+	Help  bool
+	Clear bool
+	Tool  string
+	Args  map[string]any
+}
+
+type PlanStep struct {
 	Tool string
 	Args map[string]any
+}
+
+type TurnPlan struct {
+	Quit      bool
+	Help      bool
+	Clear     bool
+	Steps     []PlanStep
+	Synthesis string
+}
+
+type TurnPlanner interface {
+	Plan(input string) (TurnPlan, error)
+}
+
+type modelProfile struct {
+	AskTopK        int
+	SearchTopK     int
+	UseSearchFirst bool
+	Synthesis      string
+}
+
+type heuristicPlanner struct {
+	profile modelProfile
 }
 
 type ToolExecution struct {
@@ -26,40 +55,80 @@ type ToolExecution struct {
 	NeedsHuman bool
 }
 
-func ParseInput(input, model string) ParsedInput {
-	trimmed := strings.TrimSpace(input)
+type TurnExecution struct {
+	Executions []*ToolExecution
+	Output     string
+	Citations  []string
+}
+
+func NewPlanner(model string) TurnPlanner {
+	return heuristicPlanner{profile: profileForModel(model)}
+}
+
+func profileForModel(model string) modelProfile {
+	m := strings.ToLower(strings.TrimSpace(model))
 	switch {
-	case trimmed == "/quit" || trimmed == "/exit":
-		return ParsedInput{Quit: true}
-	case trimmed == "/help":
-		return ParsedInput{Help: true}
-	case strings.HasPrefix(trimmed, "/list"):
-		prefix := strings.TrimSpace(strings.TrimPrefix(trimmed, "/list"))
-		return ParsedInput{Tool: "dir2mcp.list_files", Args: map[string]any{"path_prefix": prefix, "limit": 30}}
-	case strings.HasPrefix(trimmed, "/search "):
-		query := strings.TrimSpace(strings.TrimPrefix(trimmed, "/search"))
-		return ParsedInput{Tool: "dir2mcp.search", Args: map[string]any{"query": query, "k": 8}}
-	case strings.HasPrefix(trimmed, "/open "):
-		args := strings.Fields(strings.TrimPrefix(trimmed, "/open"))
-		if len(args) == 0 {
-			return ParsedInput{Help: true}
-		}
-		return ParsedInput{Tool: "dir2mcp.open_file", Args: map[string]any{"rel_path": args[0]}}
+	case strings.Contains(m, "large"):
+		return modelProfile{AskTopK: 12, SearchTopK: 8, UseSearchFirst: true, Synthesis: "analytical"}
+	case strings.Contains(m, "medium"):
+		return modelProfile{AskTopK: 12, SearchTopK: 6, UseSearchFirst: true, Synthesis: "balanced"}
+	case strings.Contains(m, "small"), strings.Contains(m, "mini"):
+		return modelProfile{AskTopK: 6, SearchTopK: 4, UseSearchFirst: false, Synthesis: "concise"}
 	default:
-		return ParsedInput{Tool: "dir2mcp.ask", Args: map[string]any{"question": trimmed, "k": AskTopKForModel(model)}}
+		return modelProfile{AskTopK: 8, SearchTopK: 5, UseSearchFirst: false, Synthesis: "balanced"}
 	}
 }
 
-func AskTopKForModel(model string) int {
-	m := strings.ToLower(strings.TrimSpace(model))
+func (p heuristicPlanner) Plan(input string) (TurnPlan, error) {
+	trimmed := strings.TrimSpace(input)
 	switch {
-	case strings.Contains(m, "large"), strings.Contains(m, "medium"):
-		return 12
-	case strings.Contains(m, "small"), strings.Contains(m, "mini"):
-		return 6
+	case trimmed == "":
+		return TurnPlan{}, nil
+	case trimmed == "/quit" || trimmed == "/exit":
+		return TurnPlan{Quit: true}, nil
+	case trimmed == "/help":
+		return TurnPlan{Help: true}, nil
+	case trimmed == "/clear":
+		return TurnPlan{Clear: true}, nil
+	case strings.HasPrefix(trimmed, "/list"):
+		prefix := strings.TrimSpace(strings.TrimPrefix(trimmed, "/list"))
+		return TurnPlan{Steps: []PlanStep{{Tool: "dir2mcp.list_files", Args: map[string]any{"path_prefix": prefix, "limit": 30}}}}, nil
+	case strings.HasPrefix(trimmed, "/search "):
+		query := strings.TrimSpace(strings.TrimPrefix(trimmed, "/search"))
+		return TurnPlan{Steps: []PlanStep{{Tool: "dir2mcp.search", Args: map[string]any{"query": query, "k": 8}}}}, nil
+	case strings.HasPrefix(trimmed, "/open"):
+		args := strings.Fields(strings.TrimPrefix(trimmed, "/open"))
+		if len(args) == 0 {
+			return TurnPlan{}, fmt.Errorf("usage: /open <rel_path>")
+		}
+		return TurnPlan{Steps: []PlanStep{{Tool: "dir2mcp.open_file", Args: map[string]any{"rel_path": args[0]}}}}, nil
 	default:
-		return 8
+		steps := make([]PlanStep, 0, 2)
+		if p.profile.UseSearchFirst {
+			steps = append(steps, PlanStep{Tool: "dir2mcp.search", Args: map[string]any{"query": trimmed, "k": p.profile.SearchTopK}})
+		}
+		steps = append(steps, PlanStep{Tool: "dir2mcp.ask", Args: map[string]any{"question": trimmed, "k": p.profile.AskTopK}})
+		return TurnPlan{Steps: steps, Synthesis: p.profile.Synthesis}, nil
 	}
+}
+
+func ParseInput(input, model string) ParsedInput {
+	planner := NewPlanner(model)
+	plan, err := planner.Plan(input)
+	if err != nil {
+		return ParsedInput{Help: true}
+	}
+	parsed := ParsedInput{Quit: plan.Quit, Help: plan.Help, Clear: plan.Clear}
+	if len(plan.Steps) == 0 {
+		return parsed
+	}
+	parsed.Tool = plan.Steps[0].Tool
+	parsed.Args = plan.Steps[0].Args
+	return parsed
+}
+
+func AskTopKForModel(model string) int {
+	return profileForModel(model).AskTopK
 }
 
 func ExecuteParsed(ctx context.Context, client *mcp.Client, parsed ParsedInput) (*ToolExecution, error) {
@@ -89,6 +158,65 @@ func needsApproval(tool string) bool {
 
 func RequiresApproval(tool string) bool {
 	return needsApproval(tool)
+}
+
+func PlanTurn(input, model string) (TurnPlan, error) {
+	return NewPlanner(model).Plan(input)
+}
+
+func ExecutePlan(ctx context.Context, client *mcp.Client, plan TurnPlan) (*TurnExecution, error) {
+	if len(plan.Steps) == 0 {
+		return &TurnExecution{}, nil
+	}
+
+	executions := make([]*ToolExecution, 0, len(plan.Steps))
+	seen := map[string]bool{}
+	allCitations := make([]string, 0)
+	for _, step := range plan.Steps {
+		execRes, err := ExecuteParsed(ctx, client, ParsedInput{Tool: step.Tool, Args: step.Args})
+		if err != nil {
+			return nil, err
+		}
+		executions = append(executions, execRes)
+		for _, c := range execRes.Citations {
+			if seen[c] {
+				continue
+			}
+			seen[c] = true
+			allCitations = append(allCitations, c)
+		}
+	}
+	sort.Strings(allCitations)
+
+	return &TurnExecution{
+		Executions: executions,
+		Output:     synthesizeTurnOutput(plan, executions),
+		Citations:  allCitations,
+	}, nil
+}
+
+func synthesizeTurnOutput(plan TurnPlan, executions []*ToolExecution) string {
+	if len(executions) == 0 {
+		return ""
+	}
+	last := executions[len(executions)-1]
+	if len(executions) == 1 {
+		return last.Output
+	}
+
+	if plan.Synthesis == "analytical" {
+		tools := make([]string, 0, len(executions))
+		for _, ex := range executions {
+			tools = append(tools, ex.Tool)
+		}
+		return fmt.Sprintf("Planner path: %s\n\n%s", strings.Join(tools, " -> "), last.Output)
+	}
+
+	if plan.Synthesis == "concise" {
+		return last.Output
+	}
+
+	return fmt.Sprintf("Used %d tools before final answer.\n\n%s", len(executions), last.Output)
 }
 
 func citationsFor(tool string, sc map[string]any) []string {
@@ -145,14 +273,4 @@ func connectedBanner(url, transport, session, model string) []string {
 	}
 	msgs = append(msgs, ui.Dim("Type /help for commands, /quit to exit."))
 	return msgs
-}
-
-func parseForJSON(input, model string) (ParsedInput, error) {
-	if strings.HasPrefix(strings.TrimSpace(input), "/open") {
-		args := strings.Fields(strings.TrimPrefix(strings.TrimSpace(input), "/open"))
-		if len(args) == 0 {
-			return ParsedInput{}, fmt.Errorf("usage: /open <rel_path>")
-		}
-	}
-	return ParseInput(input, model), nil
 }

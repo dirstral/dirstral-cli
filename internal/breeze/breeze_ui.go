@@ -17,6 +17,8 @@ import (
 type mcpResponseMsg struct {
 	output string
 	err    error
+	quit   bool
+	clear  bool
 }
 
 type breezeModel struct {
@@ -27,6 +29,7 @@ type breezeModel struct {
 	textInput textinput.Model
 	spinner   spinner.Model
 	messages  []string
+	banner    []string
 	isLoading bool
 	ready     bool
 	width     int
@@ -58,6 +61,7 @@ func initialModel(ctx context.Context, client *mcp.Client, opts Options) breezeM
 		textInput: ti,
 		spinner:   s,
 		messages:  msgs,
+		banner:    append([]string(nil), msgs...),
 	}
 }
 
@@ -127,17 +131,6 @@ func (m breezeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			m.messages = append(m.messages, ui.Prompt("breeze")+input)
 
-			if input == "/quit" || input == "/exit" {
-				return m, tea.Quit
-			}
-
-			if input == "/help" {
-				m.messages = append(m.messages, formatHelp())
-				m.viewport.SetContent(strings.Join(m.messages, "\n\n"))
-				m.viewport.GotoBottom()
-				return m, nil
-			}
-
 			m.isLoading = true
 			m.viewport.SetContent(strings.Join(m.messages, "\n\n"))
 			m.viewport.GotoBottom()
@@ -150,6 +143,15 @@ func (m breezeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case mcpResponseMsg:
 		m.isLoading = false
+		if msg.quit {
+			return m, tea.Quit
+		}
+		if msg.clear {
+			m.messages = append([]string(nil), m.banner...)
+			m.viewport.SetContent(strings.Join(m.messages, "\n\n"))
+			m.viewport.GotoBottom()
+			return m, nil
+		}
 		if msg.err != nil {
 			m.messages = append(m.messages, ui.Errorf("%v", msg.err))
 		} else if msg.output != "" {
@@ -239,7 +241,7 @@ func (m *breezeModel) applyWindowSize(width, height int) {
 func (m breezeModel) renderHelpBlock(width, height int) string {
 	helpText := formatHelp()
 	if width < 56 || height < 14 {
-		helpText = "Help: /help, /quit, /list [prefix], /search <query>, /open <rel_path>. Press ? to close."
+		helpText = "Help: /help, /quit, /clear, /list [prefix], /search <query>, /open <rel_path>. Press ? to close."
 	}
 
 	return lipgloss.NewStyle().
@@ -259,25 +261,33 @@ func maxInt(a, b int) int {
 
 func (m *breezeModel) processInputCmd(input string) tea.Cmd {
 	return func() tea.Msg {
-		parsed, err := parseForJSON(input, m.modelName)
+		plan, err := PlanTurn(input, m.modelName)
 		if err != nil {
 			return mcpResponseMsg{err: err}
 		}
-		if parsed.Help {
+		if plan.Quit {
+			return mcpResponseMsg{quit: true}
+		}
+		if plan.Help {
 			return mcpResponseMsg{output: formatHelp()}
 		}
-		if parsed.Tool == "" {
+		if plan.Clear {
+			return mcpResponseMsg{clear: true}
+		}
+		if len(plan.Steps) == 0 {
 			return mcpResponseMsg{}
 		}
-		return m.checkApprovalAndRun(parsed.Tool, parsed.Args)
+		return m.checkApprovalAndRunPlan(plan)
 	}
 }
 
-func (m *breezeModel) checkApprovalAndRun(tool string, args map[string]any) tea.Msg {
-	if needsApproval(tool) {
-		return approvalReqMsg{tool: tool, args: args}
+func (m *breezeModel) checkApprovalAndRunPlan(plan TurnPlan) tea.Msg {
+	for _, step := range plan.Steps {
+		if needsApproval(step.Tool) {
+			return approvalReqMsg{tool: step.Tool, args: step.Args}
+		}
 	}
-	execRes, err := ExecuteParsed(m.ctx, m.client, ParsedInput{Tool: tool, Args: args})
+	execRes, err := ExecutePlan(m.ctx, m.client, plan)
 	if err != nil {
 		return mcpResponseMsg{err: err}
 	}
@@ -304,6 +314,7 @@ func formatHelp() string {
 	b.WriteString(ui.Brand.Render("Commands:\n"))
 	fmt.Fprintf(&b, "  %s  %s\n", ui.Keyword.Render("/help"), ui.Muted.Render("Show help"))
 	fmt.Fprintf(&b, "  %s  %s\n", ui.Keyword.Render("/quit"), ui.Muted.Render("Exit Breeze"))
+	fmt.Fprintf(&b, "  %s  %s\n", ui.Keyword.Render("/clear"), ui.Muted.Render("Clear chat history"))
 	fmt.Fprintf(&b, "  %s  %s\n", ui.Keyword.Render("/list [prefix]"), ui.Muted.Render("List indexed files"))
 	fmt.Fprintf(&b, "  %s  %s\n", ui.Keyword.Render("/search <query>"), ui.Muted.Render("Search corpus"))
 	fmt.Fprintf(&b, "  %s  %s\n", ui.Keyword.Render("/open <rel_path>"), ui.Muted.Render("Open file from index"))
@@ -315,6 +326,7 @@ func formatHelpPlain() string {
 	return strings.Join([]string{
 		"/help - Show help",
 		"/quit - Exit Breeze",
+		"/clear - Clear chat history",
 		"/list [prefix] - List indexed files",
 		"/search <query> - Search corpus",
 		"/open <rel_path> - Open file from index",

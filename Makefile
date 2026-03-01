@@ -11,7 +11,7 @@ run:
 	go run ./cmd/dirstral
 
 fmt:
-	gofmt -w ./cmd ./internal ./test
+	gofmt -w ./cmd ./internal ./tests
 
 vet:
 	go vet ./...
