@@ -3,6 +3,7 @@ package test
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -219,12 +220,23 @@ func captureStdout(fn func() error) (string, error) {
 		_ = w.Close()
 	}()
 	os.Stdout = w
-	fnErr := fn()
-	_ = w.Close()
 
 	var buf bytes.Buffer
-	_, _ = io.Copy(&buf, r)
-	return buf.String(), fnErr
+	copyDone := make(chan error, 1)
+	go func() {
+		_, copyErr := io.Copy(&buf, r)
+		copyDone <- copyErr
+	}()
+
+	fnErr := fn()
+	closeErr := w.Close()
+	copyErr := <-copyDone
+
+	if joinedErr := errors.Join(fnErr, closeErr, copyErr); joinedErr != nil {
+		return buf.String(), joinedErr
+	}
+
+	return buf.String(), nil
 }
 
 func writeConnectionFixture(t *testing.T, root string, payload map[string]any) {
