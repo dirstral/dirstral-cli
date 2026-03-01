@@ -166,7 +166,11 @@ func runFallbackMenu(screen screenID) (appResult, error) {
 		if item.Description != "" {
 			desc = " — " + item.Description
 		}
-		fmt.Printf("  %d) %s%s\n", i+1, item.Label, desc)
+		badge := ""
+		if item.Badge != "" {
+			badge = " [" + item.Badge + "]"
+		}
+		fmt.Printf("  %d) %s%s%s\n", i+1, item.Label, badge, desc)
 	}
 
 	return appResult{Screen: screen, Chosen: readFallbackChoice(cfg)}, nil

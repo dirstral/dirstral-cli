@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/alibilge/dirstral-cli/internal/mcp"
+	"github.com/alibilge/dirstral-cli/internal/ui"
 )
 
 type Options struct {
@@ -52,13 +53,13 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 
-	fmt.Printf("Connected to %s\n", opts.MCPURL)
-	fmt.Printf("Session: %s\n", client.SessionID())
-	fmt.Println("Type /help for commands, /quit to exit.")
+	fmt.Println(ui.Info("Connected to", opts.MCPURL))
+	fmt.Println(ui.Info("Session:", client.SessionID()))
+	fmt.Println(ui.Dim("Type /help for commands, /quit to exit."))
 
 	scanner := bufio.NewScanner(os.Stdin)
 	for {
-		fmt.Print("breeze> ")
+		fmt.Print(ui.Prompt("breeze"))
 		if !scanner.Scan() {
 			return nil
 		}
@@ -74,25 +75,25 @@ func Run(ctx context.Context, opts Options) error {
 		case strings.HasPrefix(line, "/list"):
 			prefix := strings.TrimSpace(strings.TrimPrefix(line, "/list"))
 			if err := callAndRender(ctx, client, "dir2mcp.list_files", map[string]any{"path_prefix": prefix, "limit": 30}); err != nil {
-				fmt.Println("error:", err)
+				fmt.Println(ui.Errorf("%v", err))
 			}
 		case strings.HasPrefix(line, "/search "):
 			query := strings.TrimSpace(strings.TrimPrefix(line, "/search"))
 			if err := callAndRender(ctx, client, "dir2mcp.search", map[string]any{"query": query, "k": 8}); err != nil {
-				fmt.Println("error:", err)
+				fmt.Println(ui.Errorf("%v", err))
 			}
 		case strings.HasPrefix(line, "/open "):
 			args := strings.Fields(strings.TrimPrefix(line, "/open"))
 			if len(args) == 0 {
-				fmt.Println("usage: /open <rel_path>")
+				fmt.Println(ui.Dim("usage: /open <rel_path>"))
 				continue
 			}
 			if err := callAndRender(ctx, client, "dir2mcp.open_file", map[string]any{"rel_path": args[0]}); err != nil {
-				fmt.Println("error:", err)
+				fmt.Println(ui.Errorf("%v", err))
 			}
 		default:
 			if err := callAndRender(ctx, client, "dir2mcp.ask", map[string]any{"question": line, "k": 8}); err != nil {
-				fmt.Println("error:", err)
+				fmt.Println(ui.Errorf("%v", err))
 			}
 		}
 	}
@@ -125,7 +126,7 @@ func callAndRender(ctx context.Context, client *mcp.Client, tool string, args ma
 		return err
 	}
 	if res.IsError {
-		fmt.Println("tool error")
+		fmt.Println(ui.Errorf("%s returned an error", tool))
 	}
 	renderResult(tool, res)
 	return nil
@@ -153,26 +154,26 @@ func renderResult(tool string, res *mcp.ToolCallResult) {
 func renderListFiles(sc map[string]any) {
 	files, _ := sc["files"].([]any)
 	if len(files) == 0 {
-		fmt.Println("(no files)")
+		fmt.Println(ui.Dim("(no files)"))
 		return
 	}
 	for i, f := range files {
 		if i >= 20 {
-			fmt.Println("...")
+			fmt.Println(ui.Dim("..."))
 			break
 		}
 		m, ok := f.(map[string]any)
 		if !ok {
 			continue
 		}
-		fmt.Printf("- %s (%s)\n", asString(m["rel_path"]), asString(m["doc_type"]))
+		fmt.Printf("  %s %s\n", ui.Cyan.Render(asString(m["rel_path"])), ui.Dim("("+asString(m["doc_type"])+")"))
 	}
 }
 
 func renderSearch(sc map[string]any) {
 	hits, _ := sc["hits"].([]any)
 	if len(hits) == 0 {
-		fmt.Println("(no hits)")
+		fmt.Println(ui.Dim("(no hits)"))
 		return
 	}
 	for i, h := range hits {
@@ -190,9 +191,9 @@ func renderSearch(sc map[string]any) {
 		if span, ok := m["span"].(map[string]any); ok {
 			citation = mcp.CitationForSpan(path, span)
 		}
-		fmt.Printf("%d) score=%v %s\n", i+1, score, citation)
+		fmt.Printf("%s score=%s %s\n", ui.Brand.Render(fmt.Sprintf("%d)", i+1)), ui.Score(score), ui.Citation(citation))
 		if snippet != "" {
-			fmt.Printf("   %s\n", snippet)
+			fmt.Printf("   %s\n", ui.Muted.Render(snippet))
 		}
 	}
 }
@@ -201,7 +202,7 @@ func renderOpenFile(sc map[string]any) {
 	path := asString(sc["rel_path"])
 	content := asString(sc["content"])
 	if span, ok := sc["span"].(map[string]any); ok {
-		fmt.Println(mcp.CitationForSpan(path, span))
+		fmt.Println(ui.Citation(mcp.CitationForSpan(path, span)))
 	}
 	fmt.Println(content)
 }
@@ -229,7 +230,11 @@ func renderAsk(sc map[string]any) {
 		}
 		sort.Strings(ordered)
 		if len(ordered) > 0 {
-			fmt.Printf("Sources: %s\n", strings.Join(ordered, ", "))
+			styled := make([]string, len(ordered))
+			for i, c := range ordered {
+				styled[i] = ui.Citation(c)
+			}
+			fmt.Printf("%s %s\n", ui.Dim("Sources:"), strings.Join(styled, ui.Dim(", ")))
 		}
 	}
 }
@@ -253,20 +258,21 @@ func validateTools(tools []mcp.Tool) error {
 
 func confirmApproval(tool string) bool {
 	reader := bufio.NewReader(os.Stdin)
-	fmt.Printf("Run tool %s? [y/N]: ", tool)
+	fmt.Printf("%s %s ", ui.Yellow.Render("Run tool"), ui.Brand.Render(tool+"?"))
+	fmt.Print(ui.Dim("[y/N]: "))
 	line, _ := reader.ReadString('\n')
 	line = strings.TrimSpace(strings.ToLower(line))
 	return line == "y" || line == "yes"
 }
 
 func printHelp() {
-	fmt.Println("Commands:")
-	fmt.Println("  /help               Show help")
-	fmt.Println("  /quit               Exit Breeze")
-	fmt.Println("  /list [prefix]      List indexed files")
-	fmt.Println("  /search <query>     Search corpus")
-	fmt.Println("  /open <rel_path>    Open file from index")
-	fmt.Println("  Any other text is sent to dir2mcp.ask")
+	fmt.Println(ui.Brand.Render("Commands:"))
+	fmt.Printf("  %s  %s\n", ui.Keyword.Render("/help"), ui.Muted.Render("Show help"))
+	fmt.Printf("  %s  %s\n", ui.Keyword.Render("/quit"), ui.Muted.Render("Exit Breeze"))
+	fmt.Printf("  %s  %s\n", ui.Keyword.Render("/list [prefix]"), ui.Muted.Render("List indexed files"))
+	fmt.Printf("  %s  %s\n", ui.Keyword.Render("/search <query>"), ui.Muted.Render("Search corpus"))
+	fmt.Printf("  %s  %s\n", ui.Keyword.Render("/open <rel_path>"), ui.Muted.Render("Open file from index"))
+	fmt.Println(ui.Dim("  Any other text is sent to dir2mcp.ask"))
 }
 
 func asString(v any) string {

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/alibilge/dirstral-cli/internal/config"
+	"github.com/alibilge/dirstral-cli/internal/ui"
 )
 
 type State struct {
@@ -106,7 +107,7 @@ func Up(ctx context.Context, opts UpOptions) error {
 	})
 	go streamLogs(stderr, "[dir2mcp] ", nil)
 
-	fmt.Printf("lighthouse: started dir2mcp (pid=%d). Press Ctrl+C to stop.\n", cmd.Process.Pid)
+	fmt.Println(ui.Info("lighthouse:", fmt.Sprintf("started dir2mcp (pid=%d). Press Ctrl+C to stop.", cmd.Process.Pid)))
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
@@ -118,10 +119,10 @@ func Up(ctx context.Context, opts UpOptions) error {
 		if err != nil {
 			return fmt.Errorf("dir2mcp exited: %w", err)
 		}
-		fmt.Println("lighthouse: dir2mcp stopped")
+		fmt.Println(ui.Info("lighthouse:", "dir2mcp stopped"))
 		return nil
 	case <-sigCh:
-		fmt.Println("\nlighthouse: shutting down dir2mcp...")
+		fmt.Println("\n" + ui.Info("lighthouse:", "shutting down dir2mcp..."))
 		if err := terminateProcess(cmd.Process.Pid); err != nil {
 			return err
 		}
@@ -131,7 +132,7 @@ func Up(ctx context.Context, opts UpOptions) error {
 			_ = cmd.Process.Kill()
 		}
 		_ = ClearState()
-		fmt.Println("lighthouse: stopped")
+		fmt.Println(ui.Info("lighthouse:", "stopped"))
 		return nil
 	}
 }
@@ -140,16 +141,24 @@ func Status() error {
 	state, err := LoadState()
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			fmt.Println("lighthouse: no managed dir2mcp process")
+			fmt.Println(ui.Dim("lighthouse: no managed dir2mcp process"))
 			return nil
 		}
 		return err
 	}
 	alive := processAlive(state.PID)
-	fmt.Printf("lighthouse: pid=%d alive=%t\n", state.PID, alive)
+	aliveStr := ui.Red.Render("false")
+	if alive {
+		aliveStr = ui.Green.Render("true")
+	}
+	fmt.Printf("%s pid=%d alive=%s\n", ui.Brand.Render("lighthouse:"), state.PID, aliveStr)
 	if state.MCPURL != "" {
 		reachable := endpointReachable(state.MCPURL)
-		fmt.Printf("lighthouse: mcp=%s reachable=%t\n", state.MCPURL, reachable)
+		reachStr := ui.Red.Render("false")
+		if reachable {
+			reachStr = ui.Green.Render("true")
+		}
+		fmt.Printf("%s mcp=%s reachable=%s\n", ui.Brand.Render("lighthouse:"), ui.Cyan.Render(state.MCPURL), reachStr)
 	}
 	return nil
 }
@@ -158,21 +167,21 @@ func Down() error {
 	state, err := LoadState()
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			fmt.Println("lighthouse: nothing to stop")
+			fmt.Println(ui.Dim("lighthouse: nothing to stop"))
 			return nil
 		}
 		return err
 	}
 	if !processAlive(state.PID) {
 		_ = ClearState()
-		fmt.Println("lighthouse: process already stopped")
+		fmt.Println(ui.Dim("lighthouse: process already stopped"))
 		return nil
 	}
 	if err := terminateProcess(state.PID); err != nil {
 		return err
 	}
 	_ = ClearState()
-	fmt.Printf("lighthouse: stopped pid=%d\n", state.PID)
+	fmt.Println(ui.Info("lighthouse:", fmt.Sprintf("stopped pid=%d", state.PID)))
 	return nil
 }
 

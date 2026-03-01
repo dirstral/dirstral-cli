@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -28,18 +29,23 @@ var (
 
 // Reusable lipgloss styles.
 var (
-	styleBrandStrong = lipgloss.NewStyle().Foreground(clrBrandStrong).Bold(true)
-	styleMuted       = lipgloss.NewStyle().Foreground(clrMuted)
-	styleSubtle      = lipgloss.NewStyle().Foreground(clrSubtle)
-	styleSelected    = lipgloss.NewStyle().Foreground(clrBrandStrong).Bold(true)
-	styleDescription = lipgloss.NewStyle().Foreground(clrSubtle).Italic(true)
-	styleGreen       = lipgloss.NewStyle().Foreground(clrGreen)
+	styleBrandStrong  = lipgloss.NewStyle().Foreground(clrBrandStrong).Bold(true)
+	styleMuted        = lipgloss.NewStyle().Foreground(clrMuted)
+	styleSubtle       = lipgloss.NewStyle().Foreground(clrSubtle)
+	styleSelected     = lipgloss.NewStyle().Foreground(clrBrandStrong).Bold(true)
+	styleDescription  = lipgloss.NewStyle().Foreground(clrSubtle).Italic(true)
+	styleSelectedDesc = lipgloss.NewStyle().Foreground(clrMuted).Italic(true)
+	styleGreen        = lipgloss.NewStyle().Foreground(clrGreen)
 )
 
 // paint wraps text in raw ANSI codes. Used by logo rendering.
+// Respects NO_COLOR environment variable.
 func paint(text string, styles ...string) string {
 	if text == "" {
 		return ""
+	}
+	if os.Getenv("NO_COLOR") != "" {
+		return text
 	}
 	styled := ""
 	for _, style := range styles {

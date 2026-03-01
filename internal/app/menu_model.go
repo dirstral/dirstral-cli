@@ -172,7 +172,7 @@ func (m MenuModel) View() string {
 		if i == m.cursor {
 			cursor = styleBrandStrong.Render("> ")
 			labelStyle = styleSelected
-			descStyle = lipgloss.NewStyle().Foreground(clrMuted).Italic(true)
+			descStyle = styleSelectedDesc
 		}
 
 		line := cursor + labelStyle.Render(item.Label)

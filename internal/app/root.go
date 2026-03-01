@@ -50,7 +50,7 @@ func newRootCommand(cfg config.Config) *cobra.Command {
 						printUIError(err)
 					}
 				default:
-					fmt.Println("bye")
+					fmt.Println(styleMuted.Render("bye"))
 					return nil
 				}
 			}

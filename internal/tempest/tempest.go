@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/alibilge/dirstral-cli/internal/mcp"
+	"github.com/alibilge/dirstral-cli/internal/ui"
 )
 
 type Options struct {
@@ -34,7 +35,7 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 
-	fmt.Println("Tempest mode: press Enter to record, type /quit to exit.")
+	fmt.Println(ui.Dim("Tempest mode: press Enter to record, type /quit to exit."))
 	client := mcp.New(opts.MCPURL, opts.Verbose)
 	if err := client.Initialize(ctx); err != nil {
 		return err
@@ -42,7 +43,7 @@ func Run(ctx context.Context, opts Options) error {
 	reader := bufio.NewReader(os.Stdin)
 
 	for {
-		fmt.Print("tempest> ")
+		fmt.Print(ui.Prompt("tempest"))
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			return err
@@ -57,18 +58,18 @@ func Run(ctx context.Context, opts Options) error {
 		transcript, err := transcribeElevenLabs(ctx, opts.BaseURL, audioPath)
 		_ = os.Remove(audioPath)
 		if err != nil {
-			fmt.Println("transcription failed:", err)
+			fmt.Println(ui.Errorf("transcription: %v", err))
 			continue
 		}
-		fmt.Printf("you said: %s\n", transcript)
+		fmt.Printf("%s %s\n", ui.Dim("you said:"), transcript)
 
 		res, err := client.CallTool(ctx, "dir2mcp.ask", map[string]any{"question": transcript, "k": 8})
 		if err != nil {
-			fmt.Println("tool call failed:", err)
+			fmt.Println(ui.Errorf("tool call: %v", err))
 			continue
 		}
 		answer := extractAnswer(res)
-		fmt.Printf("assistant: %s\n", answer)
+		fmt.Printf("%s %s\n", ui.Brand.Render("assistant:"), answer)
 
 		if opts.Mute {
 			continue
@@ -79,11 +80,11 @@ func Run(ctx context.Context, opts Options) error {
 		}
 		ttsPath, err := synthesizeElevenLabs(ctx, opts.BaseURL, voiceID, answer)
 		if err != nil {
-			fmt.Println("tts failed:", err)
+			fmt.Println(ui.Errorf("tts: %v", err))
 			continue
 		}
 		if err := playAudio(ctx, ttsPath); err != nil {
-			fmt.Println("playback failed:", err)
+			fmt.Println(ui.Errorf("playback: %v", err))
 		}
 		_ = os.Remove(ttsPath)
 	}
