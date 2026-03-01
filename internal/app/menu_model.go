@@ -311,7 +311,9 @@ func composeWithPinnedFooter(body, footer string, height int) string {
 			bodyLines = bodyLines[:bodyBudget]
 		}
 	}
-	lines := append(bodyLines, footerLines...)
+	lines := make([]string, 0, len(bodyLines)+len(footerLines))
+	lines = append(lines, bodyLines...)
+	lines = append(lines, footerLines...)
 	return strings.Join(lines, "\n")
 }
 
