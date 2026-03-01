@@ -33,6 +33,7 @@ type model struct {
 	statusMsg string
 	width     int
 	height    int
+	showHelp  bool
 }
 
 func initialModel(cfg config.Config) model {
@@ -67,8 +68,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.input.Width = maxInt(settingsContentWidth(msg.Width)-4, 20)
 		return m, nil
 	case tea.KeyMsg:
+		if msg.String() == "?" || msg.String() == "ctrl+k" {
+			m.showHelp = !m.showHelp
+			return m, nil
+		}
+		if m.showHelp {
+			switch msg.String() {
+			case "esc", "q", "?", "ctrl+k":
+				m.showHelp = false
+			}
+			return m, nil
+		}
 		return m.handleKey(msg)
 	}
 
@@ -257,40 +270,217 @@ func (m model) handleConfirmQuitKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// ── View ──────────────────────────────────────────────────────────────
-
 var (
-	headerStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(ui.ClrBrand).
-			MarginBottom(1)
+	settingsTitleStyle = lipgloss.NewStyle().
+				Foreground(ui.ClrBrand).
+				Bold(true).
+				Underline(true)
 
-	selectedStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(ui.ClrBrand)
+	settingsMutedStyle = lipgloss.NewStyle().
+				Foreground(ui.ClrMuted)
 
-	sourceStyle = lipgloss.NewStyle().
-			Foreground(ui.ClrMuted).
-			Italic(true)
+	settingsSubtleStyle = lipgloss.NewStyle().
+				Foreground(ui.ClrSubtle)
 
-	footerStyle = lipgloss.NewStyle().
-			Foreground(ui.ClrMuted).
-			MarginTop(1)
+	settingsPanelStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(ui.ClrSubtle).
+				Padding(1, 2).
+				MarginTop(1).
+				MarginBottom(1)
+
+	settingsSelectedMarkerStyle = lipgloss.NewStyle().
+					Foreground(ui.ClrBrand).
+					Bold(true)
+
+	settingsSelectedKeyStyle = lipgloss.NewStyle().
+					Background(ui.ClrBrand).
+					Foreground(lipgloss.Color("0")).
+					Bold(true)
+
+	settingsKeyStyle = lipgloss.NewStyle().
+				Foreground(ui.ClrMuted)
+
+	settingsValueStyle = lipgloss.NewStyle().
+				Foreground(ui.ClrSubtle)
+
+	settingsSelectedValueStyle = lipgloss.NewStyle().
+					Foreground(ui.ClrBrand).
+					Italic(true)
+
+	settingsSourceStyle = lipgloss.NewStyle().
+				Foreground(ui.ClrMuted).
+				Italic(true)
 )
 
 func (m model) View() string {
-	var b strings.Builder
+	viewWidth := m.width
+	if viewWidth <= 0 {
+		viewWidth = 100
+	}
 
-	b.WriteString(headerStyle.Render("⚙  Settings"))
-	b.WriteString("\n")
+	tinyHeight := m.height > 0 && m.height < 14
+	contentWidth := settingsContentWidth(viewWidth)
+	panelWidth := settingsPanelWidth(viewWidth, contentWidth)
 
-	// Visible rows (leave room for header, footer, status).
-	maxRows := m.height - 8
+	title := settingsTitleStyle.MaxWidth(contentWidth).Render("Settings")
+	intro := settingsMutedStyle.MaxWidth(contentWidth).Render("Edit config and API defaults for Dirstral.")
+	header := joinVerticalNonEmpty(
+		lipgloss.Center,
+		lipgloss.PlaceHorizontal(panelWidth, lipgloss.Center, title),
+		lipgloss.PlaceHorizontal(panelWidth, lipgloss.Center, intro),
+	)
+
+	panelLines := m.fieldRows(contentWidth)
+	stateLines := m.stateLines()
+	if len(stateLines) > 0 {
+		panelLines = append(panelLines, "")
+		panelLines = append(panelLines, stateLines...)
+	}
+	panel := settingsPanelStyle.MaxWidth(panelWidth).Render(strings.Join(panelLines, "\n"))
+
+	body := joinVerticalNonEmpty(lipgloss.Center, header, panel)
+	if m.showHelp {
+		help := settingsPanelStyle.MaxWidth(panelWidth).Render(settingsHelpText(contentWidth, tinyHeight))
+		body = joinVerticalNonEmpty(lipgloss.Center, body, help)
+	}
+
+	footer := settingsSubtleStyle.MaxWidth(contentWidth).Render(truncateText(m.controlsHint(), contentWidth))
+	content := composeWithPinnedFooter(body, footer, m.height)
+
+	if m.height <= 0 {
+		return content
+	}
+	vAlign := lipgloss.Center
+	if tinyHeight {
+		vAlign = lipgloss.Top
+	}
+	return lipgloss.Place(viewWidth, m.height, lipgloss.Center, vAlign, content)
+}
+
+func (m model) fieldRows(contentWidth int) []string {
+	maxRows := m.visibleRows()
+	start, end := m.visibleRange(maxRows)
+
+	keyWidth := clampInt(contentWidth/3, 18, 30)
+	sourceWidth := clampInt(contentWidth/6, 10, 18)
+	valueWidth := maxInt(contentWidth-keyWidth-sourceWidth-10, 12)
+
+	lines := make([]string, 0, end-start+2)
+	for i := start; i < end; i++ {
+		f := m.fields[i]
+		marker := settingsSubtleStyle.Render(" ")
+
+		keyText := fitText(f.Key, keyWidth)
+		valueText := fitText(fieldDisplayValue(f), valueWidth)
+		sourceText := fitText("("+string(f.Source)+")", sourceWidth)
+
+		keyCell := settingsKeyStyle.Width(keyWidth).Render(keyText)
+		valueCell := settingsValueStyle.Width(valueWidth).Render(valueText)
+		if i == m.cursor {
+			marker = settingsSelectedMarkerStyle.Render(">")
+			keyCell = settingsSelectedKeyStyle.Width(keyWidth).Render(keyText)
+			valueCell = settingsSelectedValueStyle.Width(valueWidth).Render(valueText)
+		}
+		sourceCell := settingsSourceStyle.Width(sourceWidth).Render(sourceText)
+		lines = append(lines, fmt.Sprintf("  %s %s  %s  %s", marker, keyCell, valueCell, sourceCell))
+	}
+
+	if len(lines) == 0 {
+		lines = append(lines, settingsSubtleStyle.Render("  (no settings fields)"))
+	}
+
+	if len(m.fields) > maxRows {
+		lines = append(lines, "")
+		lines = append(lines, settingsSubtleStyle.Render(fmt.Sprintf("  [%d/%d]", m.cursor+1, len(m.fields))))
+	}
+
+	return lines
+}
+
+func (m model) stateLines() []string {
+	lines := make([]string, 0, 4)
+
+	switch m.state {
+	case stateEditing:
+		lines = append(lines, settingsMutedStyle.Render("Editing "+m.fields[m.cursor].Key))
+		lines = append(lines, "  "+m.input.View())
+		if m.errMsg != "" {
+			lines = append(lines, ui.Red.Render("  "+m.errMsg))
+		}
+	case stateConfirmQuit:
+		lines = append(lines, ui.Yellow.Render("Unsaved changes. Save before quitting?"))
+		if m.errMsg != "" {
+			lines = append(lines, ui.Red.Render(m.errMsg))
+		}
+	default:
+		if m.errMsg != "" {
+			lines = append(lines, ui.Red.Render(m.errMsg))
+		}
+		if m.statusMsg != "" {
+			lines = append(lines, ui.Green.Render(m.statusMsg))
+		}
+		if m.dirty {
+			lines = append(lines, ui.Yellow.Render("Unsaved changes"))
+		}
+	}
+
+	return lines
+}
+
+func settingsHelpText(contentWidth int, tinyHeight bool) string {
+	if tinyHeight {
+		return settingsSubtleStyle.Render(truncateText("Keys: up/down or j/k move, enter edit, r reset, s save, esc/q back, ? toggle help", contentWidth))
+	}
+
+	lines := []string{
+		settingsTitleStyle.Render("Settings Keymap"),
+		settingsMutedStyle.Render("up/down or j/k  move selection"),
+		settingsMutedStyle.Render("enter           edit selected value"),
+		settingsMutedStyle.Render("r               reset selected value"),
+		settingsMutedStyle.Render("s               save changes"),
+		settingsMutedStyle.Render("esc/q           back/quit"),
+		settingsMutedStyle.Render("? or ctrl+k     toggle this help"),
+	}
+	return lipgloss.NewStyle().MaxWidth(maxInt(contentWidth-2, 12)).Render(strings.Join(lines, "\n"))
+}
+
+func (m model) controlsHint() string {
+	switch m.state {
+	case stateEditing:
+		return "type value · enter confirm · esc cancel · ? help"
+	case stateConfirmQuit:
+		return "y save & quit · n discard & quit · c/esc cancel · ? help"
+	default:
+		return "up/down or j/k move · enter edit · r reset · s save · esc/q back · ? help"
+	}
+}
+
+func fieldDisplayValue(f config.FieldInfo) string {
+	if f.Sensitive {
+		if strings.TrimSpace(f.Value) == "" {
+			return "(not set)"
+		}
+		return "****"
+	}
+	if strings.TrimSpace(f.Value) == "" {
+		return "(not set)"
+	}
+	return f.Value
+}
+
+func (m model) visibleRows() int {
+	maxRows := m.height - 12
+	if m.showHelp {
+		maxRows -= 4
+	}
 	if maxRows < 5 {
 		maxRows = 5
 	}
+	return maxRows
+}
 
-	// Scrolling window.
+func (m model) visibleRange(maxRows int) (int, int) {
 	start := 0
 	if m.cursor >= maxRows {
 		start = m.cursor - maxRows + 1
@@ -299,63 +489,110 @@ func (m model) View() string {
 	if end > len(m.fields) {
 		end = len(m.fields)
 	}
+	return start, end
+}
 
-	for i := start; i < end; i++ {
-		f := m.fields[i]
-		cursor := "  "
-		if i == m.cursor {
-			cursor = ui.Brand.Render("▸ ")
-		}
-
-		displayVal := f.Value
-		if f.Sensitive && f.Value != "" {
-			displayVal = "****"
-		}
-		if f.Value == "" {
-			displayVal = ui.Muted.Render("(not set)")
-		}
-
-		keyStr := f.Key
-		if i == m.cursor {
-			keyStr = selectedStyle.Render(f.Key)
-		}
-
-		src := sourceStyle.Render(fmt.Sprintf("(%s)", f.Source))
-
-		_, _ = fmt.Fprintf(&b, "%s%-25s %s %s\n", cursor, keyStr, displayVal, src)
+func settingsContentWidth(viewWidth int) int {
+	menuHorizChrome := 6
+	if viewWidth >= 56 {
+		menuHorizChrome = 10
 	}
+	return clampInt(viewWidth-menuHorizChrome, 28, 108)
+}
 
-	// Scroll indicator.
-	if len(m.fields) > maxRows {
-		b.WriteString(ui.Muted.Render(fmt.Sprintf("  [%d/%d]\n", m.cursor+1, len(m.fields))))
+func settingsPanelWidth(viewWidth, contentWidth int) int {
+	menuHorizChrome := 6
+	if viewWidth >= 56 {
+		menuHorizChrome = 10
 	}
+	return contentWidth + menuHorizChrome - 2
+}
 
-	b.WriteString("\n")
-
-	// State-specific footer.
-	switch m.state {
-	case stateEditing:
-		_, _ = fmt.Fprintf(&b, "  Editing %s:\n", ui.Brand.Render(m.fields[m.cursor].Key))
-		b.WriteString("  " + m.input.View() + "\n")
-		if m.errMsg != "" {
-			b.WriteString("  " + ui.Red.Render(m.errMsg) + "\n")
-		}
-		b.WriteString(footerStyle.Render("  enter: confirm  esc: cancel"))
-	case stateConfirmQuit:
-		b.WriteString(ui.Yellow.Render("  You have unsaved changes. Save before quitting?") + "\n")
-		if m.errMsg != "" {
-			b.WriteString("  " + ui.Red.Render(m.errMsg) + "\n")
-		}
-		b.WriteString(footerStyle.Render("  y: save & quit  n: discard & quit  c/esc: cancel"))
-	default:
-		if m.errMsg != "" {
-			b.WriteString("  " + ui.Red.Render(m.errMsg) + "\n")
-		}
-		if m.statusMsg != "" {
-			b.WriteString("  " + ui.Green.Render(m.statusMsg) + "\n")
-		}
-		b.WriteString(footerStyle.Render("  ↑/↓: navigate  enter: edit  r: reset  s: save  q: quit"))
+func composeWithPinnedFooter(body, footer string, height int) string {
+	if height <= 0 {
+		return joinVerticalNonEmpty(lipgloss.Left, body, footer)
 	}
+	bodyLines := splitLines(body)
+	footerLines := splitLines(footer)
+	if len(footerLines) >= height {
+		return strings.Join(footerLines[:height], "\n")
+	}
+	bodyBudget := height - len(footerLines)
+	if bodyBudget < len(bodyLines) {
+		if bodyBudget <= 0 {
+			bodyLines = nil
+		} else {
+			bodyLines = bodyLines[:bodyBudget]
+		}
+	}
+	lines := make([]string, 0, len(bodyLines)+len(footerLines))
+	lines = append(lines, bodyLines...)
+	lines = append(lines, footerLines...)
+	return strings.Join(lines, "\n")
+}
 
-	return b.String()
+func joinVerticalNonEmpty(pos lipgloss.Position, items ...string) string {
+	nonEmpty := make([]string, 0, len(items))
+	for _, item := range items {
+		if strings.TrimSpace(item) == "" {
+			continue
+		}
+		nonEmpty = append(nonEmpty, item)
+	}
+	if len(nonEmpty) == 0 {
+		return ""
+	}
+	return lipgloss.JoinVertical(pos, nonEmpty...)
+}
+
+func splitLines(s string) []string {
+	if s == "" {
+		return nil
+	}
+	return strings.Split(s, "\n")
+}
+
+func truncateText(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	r := []rune(strings.TrimSpace(s))
+	if len(r) <= width {
+		return string(r)
+	}
+	if width <= 3 {
+		return string(r[:width])
+	}
+	return string(r[:width-3]) + "..."
+}
+
+func fitText(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	r := []rune(strings.TrimSpace(s))
+	if len(r) <= width {
+		return string(r) + strings.Repeat(" ", width-len(r))
+	}
+	if width <= 3 {
+		return string(r[:width])
+	}
+	return string(r[:width-3]) + "..."
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func clampInt(v, minV, maxV int) int {
+	if v < minV {
+		return minV
+	}
+	if v > maxV {
+		return maxV
+	}
+	return v
 }
