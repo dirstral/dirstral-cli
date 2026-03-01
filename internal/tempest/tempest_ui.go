@@ -36,6 +36,7 @@ type tempestModel struct {
 	ready    bool
 	width    int
 	height   int
+	showHelp bool
 }
 
 type recordDoneMsg struct {
@@ -91,6 +92,17 @@ func (m tempestModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if msg.String() == "?" || msg.String() == "ctrl+k" {
+			m.showHelp = !m.showHelp
+			return m, nil
+		}
+		if m.showHelp {
+			switch msg.String() {
+			case "esc", "q", "?", "ctrl+k":
+				m.showHelp = false
+			}
+			return m, nil
+		}
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
 			return m, tea.Quit
@@ -107,15 +119,17 @@ func (m tempestModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		headerHeight := 0
 		footerHeight := 2 // status line + margin
+		vpWidth := maxInt(msg.Width-2, 20)
+		vpHeight := maxInt(msg.Height-footerHeight-headerHeight, 4)
 
 		if !m.ready {
-			m.viewport = viewport.New(msg.Width, msg.Height-footerHeight-headerHeight)
+			m.viewport = viewport.New(vpWidth, vpHeight)
 			m.viewport.YPosition = headerHeight
 			m.viewport.SetContent(strings.Join(m.messages, "\n\n"))
 			m.ready = true
 		} else {
-			m.viewport.Width = msg.Width
-			m.viewport.Height = msg.Height - footerHeight - headerHeight
+			m.viewport.Width = vpWidth
+			m.viewport.Height = vpHeight
 		}
 
 	case recordDoneMsg:
@@ -186,6 +200,17 @@ func (m tempestModel) View() string {
 	var b strings.Builder
 	b.WriteString(m.viewport.View())
 	b.WriteString("\n\n")
+	if m.showHelp {
+		helpText := strings.Join([]string{
+			ui.Brand.Render("Tempest Keymap"),
+			ui.Muted.Render("enter  start recording"),
+			ui.Muted.Render("esc    quit"),
+			ui.Muted.Render("?      toggle help"),
+		}, "\n")
+		help := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(ui.ClrSubtle).Padding(0, 1).MaxWidth(maxInt(m.width-2, 24)).Render(helpText)
+		b.WriteString(help)
+		b.WriteString("\n\n")
+	}
 
 	status := ""
 	switch m.state {
@@ -201,8 +226,17 @@ func (m tempestModel) View() string {
 		status = ui.Green.Render(m.spinner.View() + " [🔊 Speaking...]")
 	}
 
-	b.WriteString(status)
+	b.WriteString(lipgloss.NewStyle().MaxWidth(maxInt(m.width-2, 20)).Render(status))
+	b.WriteString("\n")
+	b.WriteString(ui.Dim("? help"))
 	return b.String()
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func (m *tempestModel) recordCmd() tea.Cmd {

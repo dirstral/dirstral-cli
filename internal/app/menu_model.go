@@ -36,6 +36,7 @@ type MenuModel struct {
 	width         int
 	height        int
 	quitted       bool
+	helpVisible   bool
 	revealedCount int  // how many items have been revealed (-1 = all)
 	animate       bool // whether staggered reveal is active
 }
@@ -106,6 +107,17 @@ func (m MenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if msg.String() == "?" || msg.String() == "ctrl+k" {
+			m.helpVisible = !m.helpVisible
+			return m, nil
+		}
+		if m.helpVisible {
+			switch msg.String() {
+			case "esc", "q", "?", "ctrl+k":
+				m.helpVisible = false
+			}
+			return m, nil
+		}
 		// If still revealing, skip to showing all items on any key press.
 		if m.revealedCount >= 0 {
 			m.revealedCount = -1
@@ -138,27 +150,21 @@ func (m MenuModel) View() string {
 	if m.width == 0 {
 		return ""
 	}
+	viewWidth := maxInt(m.width, 40)
+	contentWidth := clampInt(viewWidth-6, 30, 96)
 
 	var headerItems []string
 	if m.config.Title != "" {
-		headerItems = append(headerItems, styleTitle.Render(m.config.Title))
+		headerItems = append(headerItems, styleTitle.MaxWidth(contentWidth).Render(m.config.Title))
 	}
 	for _, line := range m.config.Intro {
-		headerItems = append(headerItems, styleMuted.Render(line))
+		headerItems = append(headerItems, styleMuted.MaxWidth(contentWidth).Render(line))
 	}
 	header := lipgloss.JoinVertical(lipgloss.Center, headerItems...)
 
 	var menuLines []string
-	maxLabelWidth := 0
-	for _, item := range m.config.Items {
-		l := lipgloss.Width(item.Label)
-		if item.Badge != "" {
-			l += lipgloss.Width(" [" + item.Badge + "]")
-		}
-		if l > maxLabelWidth {
-			maxLabelWidth = l
-		}
-	}
+	labelWidth := clampInt(contentWidth/3, 12, 28)
+	descWidth := maxInt(contentWidth-labelWidth-8, 12)
 
 	showCount := len(m.config.Items)
 	if m.revealedCount >= 0 {
@@ -185,46 +191,44 @@ func (m MenuModel) View() string {
 			}
 		}
 
-		padding := maxLabelWidth - lipgloss.Width(item.Label)
-		if item.Badge != "" {
-			padding = maxLabelWidth - (lipgloss.Width(item.Label) + lipgloss.Width(" ["+item.Badge+"]"))
-		}
-		if padding < 0 {
-			padding = 0
-		}
-
-		paddedLabel := item.Label + badgeStr + strings.Repeat(" ", padding)
+		paddedLabel := fitText(item.Label+badgeStr, labelWidth)
+		desc := fitText(item.Description, descWidth)
 
 		if isSelected {
-			row := fmt.Sprintf("  %s %s", styleSelected.Render("›"), styleSelectedRow.Render(" "+paddedLabel+" ")+"   "+styleSelectedDesc.Render(item.Description))
+			row := fmt.Sprintf("  %s %s", styleSelected.Render(">"), styleSelectedRow.Render(" "+paddedLabel+" ")+"   "+styleSelectedDesc.Render(desc))
 			menuLines = append(menuLines, row)
 		} else {
-			row := fmt.Sprintf("    %s   %s", styleMuted.Render(paddedLabel), styleDescription.Render(item.Description))
+			row := fmt.Sprintf("    %s   %s", styleMuted.Render(paddedLabel), styleDescription.Render(desc))
 			menuLines = append(menuLines, row)
 		}
 	}
 
-	menuBox := styleMenuBox.Render(lipgloss.JoinVertical(lipgloss.Left, menuLines...))
-	footer := styleSubtle.Render(m.config.Controls)
+	menuBox := styleMenuBox.MaxWidth(contentWidth + 6).Render(lipgloss.JoinVertical(lipgloss.Left, menuLines...))
+	controls := m.config.Controls + " · ? help"
+	footer := styleSubtle.MaxWidth(contentWidth).Render(controls)
 
 	content := lipgloss.JoinVertical(lipgloss.Center, header, menuBox, footer)
+	if m.helpVisible {
+		helpBox := styleMenuBox.MaxWidth(contentWidth + 6).Render(menuHelpText(contentWidth))
+		content = lipgloss.JoinVertical(lipgloss.Center, header, menuBox, helpBox, footer)
+	}
 
 	if m.config.ShowLogo {
-		logo := RenderLogo(m.width)
+		logo := RenderLogo(viewWidth)
 		var b strings.Builder
 		b.WriteString(logo)
 		b.WriteByte('\n')
 		b.WriteByte('\n')
 
 		contentLines := strings.Split(content, "\n")
-		tier := ChooseTier(m.width)
+		tier := ChooseTier(viewWidth)
 		if tier == LogoCompact {
 			for _, line := range contentLines {
 				b.WriteString(padLine(line, compactLeftPad))
 				b.WriteByte('\n')
 			}
 		} else {
-			for _, line := range centerBlockLines(contentLines, m.width) {
+			for _, line := range centerBlockLines(contentLines, viewWidth) {
 				b.WriteString(line)
 				b.WriteByte('\n')
 			}
@@ -232,5 +236,47 @@ func (m MenuModel) View() string {
 		return b.String()
 	}
 
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content)
+	return lipgloss.Place(viewWidth, m.height, lipgloss.Center, lipgloss.Center, content)
+}
+
+func menuHelpText(width int) string {
+	lines := []string{
+		styleBrandStrong.Render("Keymap"),
+		styleMuted.Render("up/down or j/k  move selection"),
+		styleMuted.Render("enter           choose item"),
+		styleMuted.Render("esc/q           back/quit"),
+		styleMuted.Render("? or ctrl+k     toggle this help"),
+	}
+	return lipgloss.NewStyle().MaxWidth(maxInt(width-2, 24)).Render(strings.Join(lines, "\n"))
+}
+
+func clampInt(v, minV, maxV int) int {
+	if v < minV {
+		return minV
+	}
+	if v > maxV {
+		return maxV
+	}
+	return v
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func fitText(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	r := []rune(strings.TrimSpace(s))
+	if len(r) <= width {
+		return string(r) + strings.Repeat(" ", width-len(r))
+	}
+	if width <= 3 {
+		return string(r[:width])
+	}
+	return string(r[:width-3]) + "..."
 }

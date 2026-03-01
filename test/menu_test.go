@@ -108,3 +108,48 @@ func TestEnterWorksEvenDuringReveal(t *testing.T) {
 		t.Fatalf("expected enter to select first item during reveal, got %q", after.Chosen())
 	}
 }
+
+func TestMenuViewIncludesHelpHint(t *testing.T) {
+	m := app.NewMenuModel(app.StartMenuConfig())
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 28})
+	view := updated.(app.MenuModel).View()
+	if !strings.Contains(view, "? help") {
+		t.Fatalf("expected menu view to include help hint, got %q", view)
+	}
+}
+
+func TestMenuHelpOverlayToggle(t *testing.T) {
+	m := app.NewMenuModel(app.StartMenuConfig())
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 28})
+	m = updated.(app.MenuModel)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	withHelp := updated.(app.MenuModel)
+	if !strings.Contains(withHelp.View(), "Keymap") {
+		t.Fatalf("expected help overlay to show keymap")
+	}
+
+	updated, _ = withHelp.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	withoutHelp := updated.(app.MenuModel)
+	if strings.Contains(withoutHelp.View(), "Keymap") {
+		t.Fatalf("expected help overlay to close after second ?")
+	}
+}
+
+func TestMenuNarrowWidthTruncatesLongRows(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	cfg := app.MenuConfig{
+		Title: "T",
+		Items: []app.MenuItem{{
+			Label:       "Extremely Long Menu Label That Should Be Truncated",
+			Description: "Extremely long description text that should be truncated in narrow terminals",
+			Value:       "v",
+		}},
+	}
+	m := app.NewMenuModel(cfg)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
+	view := updated.(app.MenuModel).View()
+	if !strings.Contains(view, "...") {
+		t.Fatalf("expected truncated output in narrow width, got %q", view)
+	}
+}

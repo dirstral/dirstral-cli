@@ -32,6 +32,7 @@ type breezeModel struct {
 	ready     bool
 	width     int
 	height    int
+	showHelp  bool
 
 	// For confirmation
 	confirmingTool string
@@ -77,6 +78,17 @@ func (m breezeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if msg.String() == "?" || msg.String() == "ctrl+k" {
+			m.showHelp = !m.showHelp
+			return m, nil
+		}
+		if m.showHelp {
+			switch msg.String() {
+			case "esc", "q", "?", "ctrl+k":
+				m.showHelp = false
+			}
+			return m, nil
+		}
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
 			return m, tea.Quit
@@ -139,15 +151,18 @@ func (m breezeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		headerHeight := 0
 		footerHeight := 3 // input line + some margin
 		verticalMarginHeight := headerHeight + footerHeight
+		vpWidth := maxInt(msg.Width-2, 20)
+		vpHeight := maxInt(msg.Height-verticalMarginHeight, 4)
+		m.textInput.Width = maxInt(msg.Width-16, 16)
 
 		if !m.ready {
-			m.viewport = viewport.New(msg.Width, msg.Height-verticalMarginHeight)
+			m.viewport = viewport.New(vpWidth, vpHeight)
 			m.viewport.YPosition = headerHeight
 			m.viewport.SetContent(strings.Join(m.messages, "\n\n"))
 			m.ready = true
 		} else {
-			m.viewport.Width = msg.Width
-			m.viewport.Height = msg.Height - verticalMarginHeight
+			m.viewport.Width = vpWidth
+			m.viewport.Height = vpHeight
 		}
 
 	case mcpResponseMsg:
@@ -185,9 +200,15 @@ func (m breezeModel) View() string {
 
 	b.WriteString(m.viewport.View())
 	b.WriteString("\n\n")
+	if m.showHelp {
+		help := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(ui.ClrSubtle).Padding(0, 1).MaxWidth(maxInt(m.width-2, 24)).Render(formatHelp())
+		b.WriteString(help)
+		b.WriteString("\n\n")
+	}
 
 	if m.confirmingTool != "" {
-		b.WriteString(fmt.Sprintf("%s %s %s", ui.Yellow.Render("Run tool"), ui.Brand.Render(m.confirmingTool+"?"), ui.Dim("[y/N]: ")))
+		prompt := fmt.Sprintf("%s %s %s", ui.Yellow.Render("Run tool"), ui.Brand.Render(m.confirmingTool+"?"), ui.Dim("[y/N]: "))
+		b.WriteString(lipgloss.NewStyle().MaxWidth(maxInt(m.width-2, 20)).Render(prompt))
 		b.WriteString(m.textInput.View())
 	} else {
 		if m.isLoading {
@@ -197,8 +218,17 @@ func (m breezeModel) View() string {
 		}
 		b.WriteString(m.textInput.View())
 	}
+	b.WriteString("\n")
+	b.WriteString(ui.Dim("? help"))
 
 	return b.String()
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func (m *breezeModel) processInputCmd(input string) tea.Cmd {
