@@ -21,21 +21,21 @@ const CompactLogoText = "DIRSTRAL"
 var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 var fullLogoLines = []string{
-	"    ▄████████▄                                 ██████╗ ██╗██████╗ ███████╗████████╗██████╗  █████╗ ██╗",
-	"    █████████████████████████▄                 ██╔══██╗██║██╔══██╗██╔════╝╚══██╔══╝██╔══██╗██╔══██╗██║",
-	"    █░░░░░░░░░░░░░░░░░░░░░░░░█                 ██║  ██║██║██████╔╝███████╗   ██║   ██████╔╝███████║██║",
-	"    █░░░░░░░░░░░░░░░░░░░░░░░░█                 ██║  ██║██║██╔══██╗╚════██║   ██║   ██╔══██╗██╔══██║██║",
-	"    █░░░░░░░░░░░░░░░░░░░░░░░░█                 ██████╔╝██║██║  ██║███████║   ██║   ██║  ██║██║  ██║███████╗",
-	"    ▀████████████████████████▀                 ╚═════╝ ╚═╝╚═╝  ╚═╝╚══════╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝",
+	"    ▄████████▄                    ██████╗ ██╗██████╗ ███████╗████████╗██████╗  █████╗ ██╗",
+	"    █████████████████████████▄    ██╔══██╗██║██╔══██╗██╔════╝╚══██╔══╝██╔══██╗██╔══██╗██║",
+	"    ██████████████████████████    ██║  ██║██║██████╔╝███████╗   ██║   ██████╔╝███████║██║",
+	"    ██████████████████████████    ██║  ██║██║██╔══██╗╚════██║   ██║   ██╔══██╗██╔══██║██║",
+	"    ██████████████████████████    ██████╔╝██║██║  ██║███████║   ██║   ██║  ██║██║  ██║███████╗",
+	"    ▀████████████████████████▀    ╚═════╝ ╚═╝╚═╝  ╚═╝╚══════╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝",
 }
 
 var mediumLogoLines = []string{
-	" ✦ ▄███▄        ██████╗ ██╗██████╗ ███████╗████████╗██████╗  █████╗ ██╗",
-	"   ██████████   ██╔══██╗██║██╔══██╗██╔════╝╚══██╔══╝██╔══██╗██╔══██╗██║",
-	"   █░░░░░░░░█   ██║  ██║██║██████╔╝███████╗   ██║   ██████╔╝███████║██║",
-	"   █░░░░░░░░█   ██║  ██║██║██╔══██╗╚════██║   ██║   ██╔══██╗██╔══██║██║",
-	"   █░░░░░░░░█   ██████╔╝██║██║  ██║███████║   ██║   ██║  ██║██║  ██║███████╗",
-	"   ▀████████▀   ╚═════╝ ╚═╝╚═╝  ╚═╝╚══════╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝",
+	" ✦ ▄███▄       ██████╗ ██╗██████╗ ███████╗████████╗██████╗  █████╗ ██╗",
+	"   ██████████  ██╔══██╗██║██╔══██╗██╔════╝╚══██╔══╝██╔══██╗██╔══██╗██║",
+	"   ██████████  ██║  ██║██║██████╔╝███████╗   ██║   ██████╔╝███████║██║",
+	"   ██████████  ██║  ██║██║██╔══██╗╚════██║   ██║   ██╔══██╗██╔══██║██║",
+	"   ██████████  ██████╔╝██║██║  ██║███████║   ██║   ██║  ██║██║  ██║███████╗",
+	"   ▀████████▀  ╚═════╝ ╚═╝╚═╝  ╚═╝╚══════╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝",
 }
 
 type StartChoice string
@@ -83,28 +83,46 @@ func maxVisibleWidth(lines []string) int {
 
 func RenderLogo(width int) string {
 	tier := ChooseTier(width)
+
+	textWidths := []int{55, 55, 55, 55, 60, 60}
+	logoTints := []string{colorTint1, colorTint2, colorTint3, colorTint4, colorTint5, colorTint6}
+
 	switch tier {
 	case LogoCompact:
 		return padLine(paint(CompactLogoText, colorBrandStrong, colorBold), compactLeftPad)
 	case LogoMedium:
 		styled := make([]string, 0, len(mediumLogoLines))
 		for i, line := range mediumLogoLines {
-			style := colorBrandStrong
-			if i >= len(mediumLogoLines)-2 {
-				style = colorBrand
+			runes := []rune(line)
+			w := textWidths[i]
+			splitIdx := len(runes) - w
+			if splitIdx < 0 {
+				splitIdx = 0
 			}
-			styled = append(styled, paint(line, style))
+			folderPart := string(runes[:splitIdx])
+			textPart := string(runes[splitIdx:])
+
+			tint := logoTints[i%len(logoTints)]
+			styledLine := paint(folderPart, tint) + paint(textPart, colorBrandStrong)
+			styled = append(styled, styledLine)
 		}
 		return strings.Join(centerBlockLines(styled, width), "\n")
 	default:
 		lines := NormalizeLeftSpacing(fullLogoLines)
 		styled := make([]string, 0, len(lines))
 		for i, line := range lines {
-			style := colorBrandStrong
-			if i >= len(lines)-2 {
-				style = colorBrand
+			runes := []rune(line)
+			w := textWidths[i]
+			splitIdx := len(runes) - w
+			if splitIdx < 0 {
+				splitIdx = 0
 			}
-			styled = append(styled, paint(line, style))
+			folderPart := string(runes[:splitIdx])
+			textPart := string(runes[splitIdx:])
+
+			tint := logoTints[i%len(logoTints)]
+			styledLine := paint(folderPart, tint) + paint(textPart, colorBrandStrong)
+			styled = append(styled, styledLine)
 		}
 		return strings.Join(centerBlockLines(styled, width), "\n")
 	}
