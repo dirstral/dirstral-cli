@@ -25,6 +25,7 @@ const (
 type model struct {
 	cfg       config.Config
 	fields    []config.FieldInfo
+	baseline  map[string]string
 	cursor    int
 	state     viewState
 	input     textinput.Model
@@ -44,12 +45,21 @@ func initialModel(cfg config.Config) model {
 	fields := config.EffectiveFields(cfg)
 
 	return model{
-		cfg:    cfg,
-		fields: fields,
-		cursor: 0,
-		state:  stateBrowsing,
-		input:  ti,
+		cfg:      cfg,
+		fields:   fields,
+		baseline: snapshotValues(fields),
+		cursor:   0,
+		state:    stateBrowsing,
+		input:    ti,
 	}
+}
+
+func snapshotValues(fields []config.FieldInfo) map[string]string {
+	out := make(map[string]string, len(fields))
+	for _, field := range fields {
+		out[field.Key] = field.Value
+	}
+	return out
 }
 
 // Run launches the settings TUI as its own tea.Program.
@@ -180,6 +190,7 @@ func (m model) handleEditingKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m model) commitEdit() (tea.Model, tea.Cmd) {
 	key := m.fields[m.cursor].Key
 	val := m.input.Value()
+	changed := m.fields[m.cursor].Value != val
 
 	if err := config.ValidateField(key, val); err != nil {
 		m.errMsg = err.Error()
@@ -187,19 +198,25 @@ func (m model) commitEdit() (tea.Model, tea.Cmd) {
 	}
 
 	// Apply to the in-memory config or track secret change.
-	if m.fields[m.cursor].Sensitive {
-		m.fields[m.cursor].Value = val
-		m.fields[m.cursor].Source = config.SourceDotEnvLocal
-	} else {
-		config.ApplyField(&m.cfg, key, val)
-		m.fields[m.cursor].Value = val
-		m.fields[m.cursor].Source = config.SourceConfigFile
+	if changed {
+		if m.fields[m.cursor].Sensitive {
+			m.fields[m.cursor].Value = val
+			m.fields[m.cursor].Source = config.SourceDotEnvLocal
+		} else {
+			config.ApplyField(&m.cfg, key, val)
+			m.fields[m.cursor].Value = val
+			m.fields[m.cursor].Source = config.SourceConfigFile
+		}
 	}
 
-	m.dirty = true
+	m.recomputeDirty()
 	m.state = stateBrowsing
 	m.errMsg = ""
-	m.statusMsg = fmt.Sprintf("Updated %s", key)
+	if changed {
+		m.statusMsg = fmt.Sprintf("Updated %s", key)
+	} else {
+		m.statusMsg = fmt.Sprintf("No change for %s", key)
+	}
 	m.input.Blur()
 	return m, nil
 }
@@ -218,7 +235,7 @@ func (m *model) resetField() {
 	config.ApplyField(&m.cfg, f.Key, def)
 	f.Value = def
 	f.Source = config.SourceDefault
-	m.dirty = true
+	m.recomputeDirty()
 	m.errMsg = ""
 	m.statusMsg = fmt.Sprintf("Reset %s to default", f.Key)
 }
@@ -244,7 +261,8 @@ func (m *model) save() {
 		}
 	}
 
-	m.dirty = false
+	m.baseline = snapshotValues(m.fields)
+	m.recomputeDirty()
 	m.errMsg = ""
 	m.statusMsg = "Settings saved"
 }
@@ -268,6 +286,56 @@ func (m model) handleConfirmQuitKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 	return m, nil
+}
+
+type pendingChange struct {
+	key       string
+	oldValue  string
+	newValue  string
+	sensitive bool
+}
+
+func (m *model) recomputeDirty() {
+	m.dirty = len(m.pendingChanges()) > 0
+}
+
+func (m model) pendingChanges() []pendingChange {
+	changes := make([]pendingChange, 0)
+	for _, field := range m.fields {
+		before := m.baseline[field.Key]
+		if field.Value == before {
+			continue
+		}
+		changes = append(changes, pendingChange{
+			key:       field.Key,
+			oldValue:  before,
+			newValue:  field.Value,
+			sensitive: field.Sensitive,
+		})
+	}
+	return changes
+}
+
+func (m model) pendingChangeLines(maxVisible int) []string {
+	changes := m.pendingChanges()
+	if len(changes) == 0 {
+		return nil
+	}
+
+	if maxVisible <= 0 {
+		maxVisible = len(changes)
+	}
+
+	lines := make([]string, 0, maxVisible+2)
+	lines = append(lines, ui.Yellow.Render(fmt.Sprintf("Unsaved changes (%d):", len(changes))))
+	for i, ch := range changes {
+		if i >= maxVisible {
+			lines = append(lines, settingsSubtleStyle.Render(fmt.Sprintf("  ... +%d more", len(changes)-maxVisible)))
+			break
+		}
+		lines = append(lines, ui.Green.Render(fmt.Sprintf("  - %s: %s -> %s", ch.key, changeValueDisplay(ch.oldValue, ch.sensitive), changeValueDisplay(ch.newValue, ch.sensitive))))
+	}
+	return lines
 }
 
 var (
@@ -420,6 +488,7 @@ func (m model) stateLines() []string {
 		if m.errMsg != "" {
 			lines = append(lines, ui.Red.Render(m.errMsg))
 		}
+		lines = append(lines, m.pendingChangeLines(3)...)
 	default:
 		if m.errMsg != "" {
 			lines = append(lines, ui.Red.Render(m.errMsg))
@@ -427,9 +496,7 @@ func (m model) stateLines() []string {
 		if m.statusMsg != "" {
 			lines = append(lines, ui.Green.Render(m.statusMsg))
 		}
-		if m.dirty {
-			lines = append(lines, ui.Yellow.Render("Unsaved changes"))
-		}
+		lines = append(lines, m.pendingChangeLines(4)...)
 	}
 
 	return lines
@@ -464,16 +531,20 @@ func (m model) controlsHint() string {
 }
 
 func fieldDisplayValue(f config.FieldInfo) string {
-	if f.Sensitive {
-		if strings.TrimSpace(f.Value) == "" {
+	return changeValueDisplay(f.Value, f.Sensitive)
+}
+
+func changeValueDisplay(value string, sensitive bool) string {
+	if sensitive {
+		if strings.TrimSpace(value) == "" {
 			return "(not set)"
 		}
 		return "****"
 	}
-	if strings.TrimSpace(f.Value) == "" {
+	if strings.TrimSpace(value) == "" {
 		return "(not set)"
 	}
-	return f.Value
+	return value
 }
 
 func (m model) visibleRows() int {
