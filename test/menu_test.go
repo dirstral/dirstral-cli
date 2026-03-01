@@ -125,14 +125,50 @@ func TestMenuHelpOverlayToggle(t *testing.T) {
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
 	withHelp := updated.(app.MenuModel)
-	if !strings.Contains(withHelp.View(), "Keymap") {
+	if !strings.Contains(withHelp.View(), "Welcome to Dirstral Keymap") {
 		t.Fatalf("expected help overlay to show keymap")
 	}
 
 	updated, _ = withHelp.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
 	withoutHelp := updated.(app.MenuModel)
-	if strings.Contains(withoutHelp.View(), "Keymap") {
+	if strings.Contains(withoutHelp.View(), "Welcome to Dirstral Keymap") {
 		t.Fatalf("expected help overlay to close after second ?")
+	}
+}
+
+func TestMenuHelpOverlayBlocksEnterSelection(t *testing.T) {
+	m := app.NewMenuModel(app.StartMenuConfig())
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 28})
+	m = updated.(app.MenuModel)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	withHelp := updated.(app.MenuModel)
+
+	updated, cmd := withHelp.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	afterEnter := updated.(app.MenuModel)
+	if afterEnter.Chosen() != "" {
+		t.Fatalf("expected no selection when help overlay is open, got %q", afterEnter.Chosen())
+	}
+	if cmd != nil {
+		t.Fatalf("expected no quit command when help overlay is open")
+	}
+}
+
+func TestMenuHelpOverlayCtrlKToggle(t *testing.T) {
+	m := app.NewMenuModel(app.StartMenuConfig())
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 28})
+	m = updated.(app.MenuModel)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlK})
+	withHelp := updated.(app.MenuModel)
+	if !strings.Contains(withHelp.View(), "Welcome to Dirstral Keymap") {
+		t.Fatalf("expected help overlay to open on ctrl+k")
+	}
+
+	updated, _ = withHelp.Update(tea.KeyMsg{Type: tea.KeyCtrlK})
+	withoutHelp := updated.(app.MenuModel)
+	if strings.Contains(withoutHelp.View(), "Welcome to Dirstral Keymap") {
+		t.Fatalf("expected help overlay to close on second ctrl+k")
 	}
 }
 

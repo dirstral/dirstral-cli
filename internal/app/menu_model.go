@@ -209,7 +209,7 @@ func (m MenuModel) View() string {
 
 	content := lipgloss.JoinVertical(lipgloss.Center, header, menuBox, footer)
 	if m.helpVisible {
-		helpBox := styleMenuBox.MaxWidth(contentWidth + 6).Render(menuHelpText(contentWidth))
+		helpBox := styleMenuBox.MaxWidth(contentWidth + 6).Render(menuHelpText(contentWidth, m.config.Title))
 		content = lipgloss.JoinVertical(lipgloss.Center, header, menuBox, helpBox, footer)
 	}
 
@@ -239,9 +239,16 @@ func (m MenuModel) View() string {
 	return lipgloss.Place(viewWidth, m.height, lipgloss.Center, lipgloss.Center, content)
 }
 
-func menuHelpText(width int) string {
+func menuHelpText(width int, screenTitle string) string {
+	title := strings.TrimSpace(screenTitle)
+	if title == "" {
+		title = "Keymap"
+	} else {
+		title += " Keymap"
+	}
+
 	lines := []string{
-		styleBrandStrong.Render("Keymap"),
+		styleBrandStrong.Render(title),
 		styleMuted.Render("up/down or j/k  move selection"),
 		styleMuted.Render("enter           choose item"),
 		styleMuted.Render("esc/q           back/quit"),

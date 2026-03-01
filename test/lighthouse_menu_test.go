@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/alibilge/dirstral-cli/internal/app"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestLighthouseMenuItemsOrder(t *testing.T) {
@@ -22,5 +23,27 @@ func TestLighthouseMenuControlsAreKeyboardFirst(t *testing.T) {
 	}
 	if !strings.Contains(cfg.Controls, "esc/q") {
 		t.Fatalf("expected esc/q controls, got %q", cfg.Controls)
+	}
+}
+
+func TestLighthouseMenuHelpOverlayToggleVisibility(t *testing.T) {
+	m := app.NewMenuModel(app.LighthouseMenuConfig())
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 28})
+	m = updated.(app.MenuModel)
+
+	if strings.Contains(m.View(), "Lighthouse Keymap") {
+		t.Fatalf("expected help overlay hidden by default")
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	withHelp := updated.(app.MenuModel)
+	if !strings.Contains(withHelp.View(), "Lighthouse Keymap") {
+		t.Fatalf("expected help overlay visible after ?")
+	}
+
+	updated, _ = withHelp.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	withoutHelp := updated.(app.MenuModel)
+	if strings.Contains(withoutHelp.View(), "Lighthouse Keymap") {
+		t.Fatalf("expected help overlay hidden after second ?")
 	}
 }
