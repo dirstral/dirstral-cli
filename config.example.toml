@@ -2,7 +2,7 @@
 # Copy this file to ~/.config/dirstral/config.toml and edit as needed.
 #
 # Config precedence (highest to lowest):
-#   1. Shell environment variables (DIRSTRAL_*, ELEVENLABS_*)
+#   1. Shell environment variables (DIRSTRAL_*, ELEVENLABS_*, DIR2MCP_*)
 #   2. .env.local (for secrets — not committed to git)
 #   3. .env
 #   4. ~/.config/dirstral/config.toml (this file)

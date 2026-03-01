@@ -397,7 +397,10 @@ func renderListFilesString(sc map[string]any) string {
 			icon = ui.Brand.Render("  ")
 		}
 
-		line := fmt.Sprintf("%s%s %s", icon, ui.Cyan.Render(path), ui.Dim("("+docType+")"))
+		line := fmt.Sprintf("%s%s", icon, ui.Cyan.Render(path))
+		if docType != "" {
+			line += " " + ui.Dim("("+docType+")")
+		}
 		switch status {
 		case "error":
 			line += " " + ui.Red.Render("[error]")
