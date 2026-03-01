@@ -236,7 +236,7 @@ func (m MenuModel) View() string {
 		body = joinVerticalNonEmpty(lipgloss.Center, header, menuBox)
 	}
 	if m.helpVisible {
-		helpText := menuHelpText(contentWidth)
+		helpText := menuHelpText(contentWidth, m.config.Title)
 		if tinyHeight {
 			helpText = styleMuted.Render(truncateText("Keys: up/down or j/k move · enter choose · esc/q back · ? toggle help", contentWidth))
 		}
@@ -283,9 +283,17 @@ func (m MenuModel) View() string {
 	return lipgloss.Place(viewWidth, m.height, lipgloss.Center, vAlign, content)
 }
 
-func menuHelpText(width int) string {
+// menuHelpText renders the shared menu keymap panel with screen context.
+func menuHelpText(width int, screenTitle string) string {
+	title := strings.TrimSpace(screenTitle)
+	if title == "" {
+		title = "Keymap"
+	} else {
+		title += " Keymap"
+	}
+
 	lines := []string{
-		styleBrandStrong.Render("Keymap"),
+		styleBrandStrong.Render(title),
 		styleMuted.Render("up/down or j/k  move selection"),
 		styleMuted.Render("enter           choose item"),
 		styleMuted.Render("esc/q           back/quit"),

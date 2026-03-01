@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// TestTempestUpdateWindowSizeIgnoresRepeatedTinyResize verifies tiny resize events do not collapse layout.
 func TestTempestUpdateWindowSizeIgnoresRepeatedTinyResize(t *testing.T) {
 	m := initialModel(context.Background(), nil, Options{MCPURL: "http://example.com"})
 
@@ -37,13 +38,15 @@ func TestTempestUpdateWindowSizeIgnoresRepeatedTinyResize(t *testing.T) {
 	}
 }
 
-func TestTempestHelpToggleAndEnterBlockedWhenHelpOpen(t *testing.T) {
+// TestTempestHelpToggleParityWithCtrlKAndEnterBlockedWhenOpen verifies toggle-key parity and input blocking.
+// This intentionally runs before any WindowSizeMsg to cover pre-initialized model behavior from initialModel.
+func TestTempestHelpToggleParityWithCtrlKAndEnterBlockedWhenOpen(t *testing.T) {
 	m := initialModel(context.Background(), nil, Options{MCPURL: "http://example.com"})
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlK})
 	got := updated.(tempestModel)
 	if !got.showHelp {
-		t.Fatalf("expected help to be shown after '?' toggle")
+		t.Fatalf("expected help to be shown after ctrl+k toggle")
 	}
 
 	updated, cmd := got.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -61,10 +64,23 @@ func TestTempestHelpToggleAndEnterBlockedWhenHelpOpen(t *testing.T) {
 	updated, _ = got.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
 	got = updated.(tempestModel)
 	if got.showHelp {
-		t.Fatalf("expected help to be hidden after second '?' toggle")
+		t.Fatalf("expected help to be hidden after '?' toggle")
+	}
+
+	updated, _ = got.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	got = updated.(tempestModel)
+	if !got.showHelp {
+		t.Fatalf("expected help to be shown after '?' toggle")
+	}
+
+	updated, _ = got.Update(tea.KeyMsg{Type: tea.KeyCtrlK})
+	got = updated.(tempestModel)
+	if got.showHelp {
+		t.Fatalf("expected help to be hidden after ctrl+k toggle")
 	}
 }
 
+// TestTempestViewIncludesHelpHintText ensures the help discoverability hint is visible.
 func TestTempestViewIncludesHelpHintText(t *testing.T) {
 	m := initialModel(context.Background(), nil, Options{MCPURL: "http://example.com"})
 
