@@ -23,18 +23,20 @@ const (
 
 // model is the bubbletea model for the settings editor.
 type model struct {
-	cfg       config.Config
-	fields    []config.FieldInfo
-	baseline  map[string]string
-	cursor    int
-	state     viewState
-	input     textinput.Model
-	dirty     bool
-	errMsg    string
-	statusMsg string
-	width     int
-	height    int
-	showHelp  bool
+	cfg                  config.Config
+	fields               []config.FieldInfo
+	baseline             map[string]string
+	cachedPendingChanges []pendingChange
+	pendingChangesValid  bool
+	cursor               int
+	state                viewState
+	input                textinput.Model
+	dirty                bool
+	errMsg               string
+	statusMsg            string
+	width                int
+	height               int
+	showHelp             bool
 }
 
 func initialModel(cfg config.Config) model {
@@ -205,6 +207,7 @@ func (m model) commitEdit() (tea.Model, tea.Cmd) {
 			config.ApplyField(&m.cfg, key, val)
 			m.fields[m.cursor].Value = val
 		}
+		m.invalidatePendingChanges()
 	}
 
 	m.recomputeDirty()
@@ -233,6 +236,7 @@ func (m *model) resetField() {
 	config.ApplyField(&m.cfg, f.Key, def)
 	f.Value = def
 	f.Source = config.SourceDefault
+	m.invalidatePendingChanges()
 	m.recomputeDirty()
 	m.errMsg = ""
 	m.statusMsg = fmt.Sprintf("Reset %s to default", f.Key)
@@ -269,6 +273,7 @@ func (m *model) save() {
 	m.applyPersistedSources()
 
 	m.baseline = snapshotValues(m.fields)
+	m.invalidatePendingChanges()
 	m.recomputeDirty()
 	m.errMsg = ""
 	m.statusMsg = "Settings saved"
@@ -302,6 +307,11 @@ type pendingChange struct {
 	sensitive bool
 }
 
+func (m *model) invalidatePendingChanges() {
+	m.cachedPendingChanges = nil
+	m.pendingChangesValid = false
+}
+
 func (m *model) recomputeDirty() {
 	m.dirty = len(m.pendingChanges()) > 0
 }
@@ -324,7 +334,10 @@ func (m *model) applyPersistedSources() {
 	}
 }
 
-func (m model) pendingChanges() []pendingChange {
+func (m *model) pendingChanges() []pendingChange {
+	if m.pendingChangesValid {
+		return m.cachedPendingChanges
+	}
 	changes := make([]pendingChange, 0)
 	for _, field := range m.fields {
 		before := m.baseline[field.Key]
@@ -338,10 +351,12 @@ func (m model) pendingChanges() []pendingChange {
 			sensitive: field.Sensitive,
 		})
 	}
-	return changes
+	m.cachedPendingChanges = changes
+	m.pendingChangesValid = true
+	return m.cachedPendingChanges
 }
 
-func (m model) pendingChangeLines(maxVisible int) []string {
+func (m *model) pendingChangeLines(maxVisible int) []string {
 	changes := m.pendingChanges()
 	if len(changes) == 0 {
 		return nil
