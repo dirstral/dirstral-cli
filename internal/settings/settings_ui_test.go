@@ -164,6 +164,56 @@ func TestSaveDeletesClearedSensitiveValues(t *testing.T) {
 	}
 }
 
+func TestSaveAggregatesSecretFailures(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	t.Setenv("DIR2MCP_AUTH_TOKEN", "")
+	t.Setenv("ELEVENLABS_API_KEY", "")
+
+	dir := t.TempDir()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir temp: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(wd)
+	})
+
+	home := filepath.Join(dir, "home")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatalf("mkdir home: %v", err)
+	}
+	t.Setenv("HOME", home)
+
+	if err := os.Mkdir(".env.local", 0o755); err != nil {
+		t.Fatalf("mkdir .env.local directory: %v", err)
+	}
+
+	m := initialModel(config.Default())
+	tokenIndex := findFieldIndex(t, m.fields, "DIR2MCP_AUTH_TOKEN")
+	m.fields[tokenIndex].Value = "new-token"
+	m.recomputeDirty()
+
+	m.save()
+	if m.errMsg == "" {
+		t.Fatalf("expected aggregated secret save error")
+	}
+	if !strings.Contains(m.errMsg, "DIR2MCP_AUTH_TOKEN:") {
+		t.Fatalf("expected token key in error, got %q", m.errMsg)
+	}
+	if !strings.Contains(m.errMsg, "ELEVENLABS_API_KEY:") {
+		t.Fatalf("expected api key in error, got %q", m.errMsg)
+	}
+	if !strings.Contains(m.errMsg, "Some changes may have been saved.") {
+		t.Fatalf("expected partial-save warning, got %q", m.errMsg)
+	}
+	if !m.dirty {
+		t.Fatalf("expected dirty to remain true after failed save")
+	}
+}
+
 func findFieldIndex(t *testing.T, fields []config.FieldInfo, key string) int {
 	t.Helper()
 	for i, f := range fields {

@@ -250,6 +250,7 @@ func (m *model) save() {
 	}
 
 	// Save secrets to .env.local.
+	secretFailures := make([]string, 0)
 	for _, f := range m.fields {
 		if !f.Sensitive {
 			continue
@@ -265,9 +266,13 @@ func (m *model) save() {
 			err = config.SaveSecret(envKey, f.Value)
 		}
 		if err != nil {
-			m.errMsg = fmt.Sprintf("Save secret %s failed: %v", f.Key, err)
-			return
+			secretFailures = append(secretFailures, fmt.Sprintf("%s: %v", f.Key, err))
 		}
+	}
+	if len(secretFailures) > 0 {
+		m.errMsg = fmt.Sprintf("Save secrets failed for %s. Some changes may have been saved.", strings.Join(secretFailures, "; "))
+		m.statusMsg = ""
+		return
 	}
 
 	m.applyPersistedSources()
