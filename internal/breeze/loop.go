@@ -262,7 +262,7 @@ func citationsFor(tool string, sc map[string]any) []string {
 	return list
 }
 
-func connectedBanner(url, transport, session, model string) []string {
+func connectedBanner(url, transport, session, model, startupHint string) []string {
 	msgs := []string{
 		ui.Info("Connected to", url),
 		ui.Info("Transport:", transport),
@@ -270,6 +270,9 @@ func connectedBanner(url, transport, session, model string) []string {
 	}
 	if strings.TrimSpace(session) != "" {
 		msgs = append(msgs, ui.Info("Session:", session))
+	}
+	if strings.TrimSpace(startupHint) != "" {
+		msgs = append(msgs, ui.Yellow.Render("Warning: "+startupHint))
 	}
 	msgs = append(msgs, ui.Dim("Type /help for commands, /quit to exit."))
 	return msgs

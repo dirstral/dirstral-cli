@@ -12,7 +12,6 @@ import (
 const (
 	DefaultTerminalWidth = 120
 	logoPadding          = 2
-	maxLeftPad           = 20
 	compactLeftPad       = 2
 )
 
@@ -44,7 +43,7 @@ const (
 	ChoiceBreeze     StartChoice = "Breeze"
 	ChoiceTempest    StartChoice = "Tempest"
 	ChoiceLighthouse StartChoice = "Lighthouse"
-	ChoiceQuit       StartChoice = "Quit"
+	ChoiceQuit       StartChoice = "Exit"
 )
 
 type LogoTier int
@@ -81,21 +80,22 @@ func maxVisibleWidth(lines []string) int {
 	return max
 }
 
-func RenderLogo(width int) string {
+// RenderLogoLines returns styled (colored) logo lines WITHOUT any horizontal
+// centering applied. Use centerBlockLines on the result to position them.
+func RenderLogoLines(width int) ([]string, LogoTier) {
 	tier := ChooseTier(width)
-
 	logoTints := []string{colorTint1, colorTint2, colorTint3, colorTint4, colorTint5, colorTint6}
 
 	switch tier {
 	case LogoCompact:
-		return padLine(paint(CompactLogoText, colorBrandStrong, colorBold), compactLeftPad)
+		return []string{paint(CompactLogoText, colorBrandStrong, colorBold)}, LogoCompact
 	case LogoMedium:
 		styled := make([]string, 0, len(mediumLogoLines))
 		for i, line := range mediumLogoLines {
 			tint := logoTints[i%len(logoTints)]
 			styled = append(styled, paint(line, tint))
 		}
-		return strings.Join(centerBlockLines(styled, width), "\n")
+		return styled, LogoMedium
 	default:
 		lines := NormalizeLeftSpacing(fullLogoLines)
 		styled := make([]string, 0, len(lines))
@@ -103,8 +103,16 @@ func RenderLogo(width int) string {
 			tint := logoTints[i%len(logoTints)]
 			styled = append(styled, paint(line, tint))
 		}
-		return strings.Join(centerBlockLines(styled, width), "\n")
+		return styled, LogoFull
 	}
+}
+
+func RenderLogo(width int) string {
+	lines, tier := RenderLogoLines(width)
+	if tier == LogoCompact {
+		return padLine(lines[0], compactLeftPad)
+	}
+	return strings.Join(centerBlockLines(lines, width), "\n")
 }
 
 func padLine(line string, pad int) string {
@@ -126,7 +134,7 @@ func centerBlockLines(lines []string, width int) []string {
 	}
 	pad := 0
 	if width > maxWidth {
-		pad = clampLeftPad((width - maxWidth) / 2)
+		pad = (width - maxWidth) / 2
 	}
 	out := make([]string, len(lines))
 	left := strings.Repeat(" ", pad)
@@ -135,17 +143,6 @@ func centerBlockLines(lines []string, width int) []string {
 	}
 	return out
 }
-
-func clampLeftPad(n int) int {
-	if n < 0 {
-		return 0
-	}
-	if n > maxLeftPad {
-		return maxLeftPad
-	}
-	return n
-}
-
 func visibleWidth(s string) int {
 	plain := ansiPattern.ReplaceAllString(s, "")
 	return len([]rune(plain))

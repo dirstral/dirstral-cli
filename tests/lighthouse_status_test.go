@@ -1,10 +1,15 @@
 package test
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -66,6 +71,190 @@ func TestStatusReturnsErrorWhenMCPUnready(t *testing.T) {
 	if !strings.Contains(err.Error(), "lighthouse not ready") {
 		t.Fatalf("unexpected error: %v", err)
 	}
+}
+
+func TestStatusIncludesConnectionContractDetails(t *testing.T) {
+	setTestConfigDir(t)
+
+	server := newMockMCPServer(t, true)
+	defer server.Close()
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".dir2mcp"), 0o755); err != nil {
+		t.Fatalf("mkdir .dir2mcp: %v", err)
+	}
+	writeConnectionFixture(t, root, map[string]any{
+		"url": server.URL,
+		"headers": map[string]any{
+			"MCP-Protocol-Version": "2025-11-25",
+			"Authorization":        "Bearer <token-from-secret.token>",
+		},
+		"session": map[string]any{
+			"uses_mcp_session_id":    true,
+			"header_name":            "MCP-Session-Id",
+			"assigned_on_initialize": true,
+		},
+		"token_source": "secret.token",
+		"token_file":   filepath.Join(root, ".dir2mcp", "secret.token"),
+	})
+
+	s := host.State{PID: os.Getpid(), StartedAt: "now", MCPURL: server.URL, RootDir: root}
+	if err := host.SaveState(s); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = host.ClearState()
+	})
+
+	out, err := captureStdout(func() error {
+		return host.Status()
+	})
+	if err != nil {
+		t.Fatalf("status returned error: %v", err)
+	}
+
+	clean := stripANSI(out)
+	if !strings.Contains(clean, "protocol=2025-11-25") {
+		t.Fatalf("expected protocol details in output, got: %q", clean)
+	}
+	if !strings.Contains(clean, "session_header=MCP-Session-Id") {
+		t.Fatalf("expected session header details in output, got: %q", clean)
+	}
+	if !strings.Contains(clean, "auth_source=secret.token") {
+		t.Fatalf("expected auth source details in output, got: %q", clean)
+	}
+}
+
+func TestStatusConnectionContractFallbacksToUnknown(t *testing.T) {
+	setTestConfigDir(t)
+
+	server := newMockMCPServer(t, true)
+	defer server.Close()
+
+	s := host.State{PID: os.Getpid(), StartedAt: "now", MCPURL: server.URL, RootDir: t.TempDir()}
+	if err := host.SaveState(s); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = host.ClearState()
+	})
+
+	out, err := captureStdout(func() error {
+		return host.Status()
+	})
+	if err != nil {
+		t.Fatalf("status returned error: %v", err)
+	}
+
+	clean := stripANSI(out)
+	if !strings.Contains(clean, "protocol=unknown") {
+		t.Fatalf("expected protocol fallback in output, got: %q", clean)
+	}
+	if !strings.Contains(clean, "session_header=unknown") {
+		t.Fatalf("expected session header fallback in output, got: %q", clean)
+	}
+	if !strings.Contains(clean, "auth_source=unknown") {
+		t.Fatalf("expected auth source fallback in output, got: %q", clean)
+	}
+}
+
+func TestStatusDerivesAuthSourceFromTokenFileIndicator(t *testing.T) {
+	setTestConfigDir(t)
+
+	server := newMockMCPServer(t, true)
+	defer server.Close()
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".dir2mcp"), 0o755); err != nil {
+		t.Fatalf("mkdir .dir2mcp: %v", err)
+	}
+	writeConnectionFixture(t, root, map[string]any{
+		"url": server.URL,
+		"headers": map[string]any{
+			"MCP-Protocol-Version": "2025-11-25",
+		},
+		"session": map[string]any{
+			"uses_mcp_session_id": false,
+			"header_name":         "MCP-Session-Id",
+		},
+		"token_file": filepath.Join(root, ".dir2mcp", "secret.token"),
+	})
+
+	s := host.State{PID: os.Getpid(), StartedAt: "now", MCPURL: server.URL, RootDir: root}
+	if err := host.SaveState(s); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = host.ClearState()
+	})
+
+	out, err := captureStdout(func() error {
+		return host.Status()
+	})
+	if err != nil {
+		t.Fatalf("status returned error: %v", err)
+	}
+
+	clean := stripANSI(out)
+	if !strings.Contains(clean, "auth_source=file") {
+		t.Fatalf("expected auth source fallback to file indicator, got: %q", clean)
+	}
+	if !strings.Contains(clean, "session_header=unknown") {
+		t.Fatalf("expected session header to stay unknown when disabled, got: %q", clean)
+	}
+}
+
+func captureStdout(fn func() error) (string, error) {
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		os.Stdout = old
+	}()
+	defer func() {
+		_ = r.Close()
+	}()
+	defer func() {
+		_ = w.Close()
+	}()
+	os.Stdout = w
+
+	var buf bytes.Buffer
+	copyDone := make(chan error, 1)
+	go func() {
+		_, copyErr := io.Copy(&buf, r)
+		copyDone <- copyErr
+	}()
+
+	fnErr := fn()
+	closeErr := w.Close()
+	copyErr := <-copyDone
+
+	if joinedErr := errors.Join(fnErr, closeErr, copyErr); joinedErr != nil {
+		return buf.String(), joinedErr
+	}
+
+	return buf.String(), nil
+}
+
+func writeConnectionFixture(t *testing.T, root string, payload map[string]any) {
+	t.Helper()
+
+	connectionJSON, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal connection payload: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(root, ".dir2mcp", "connection.json"), connectionJSON, 0o644); err != nil {
+		t.Fatalf("write connection.json: %v", err)
+	}
+}
+
+func stripANSI(value string) string {
+	ansi := regexp.MustCompile(`\x1b\[[0-9;]*m`)
+	return ansi.ReplaceAllString(value, "")
 }
 
 func newMockMCPServer(t *testing.T, ready bool) *httptest.Server {

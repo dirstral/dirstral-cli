@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/alibilge/dirstral-cli/internal/breeze"
 	"github.com/alibilge/dirstral-cli/internal/config"
@@ -38,7 +39,8 @@ func newRootCommand(cfg config.Config) *cobra.Command {
 					printModeFeedback("Breeze", runBreeze(cmd.Context(), cfg))
 				case ChoiceTempest:
 					printModeHeader("Tempest")
-					opts := BuildTempestOptions(cfg, cfg.MCP.URL, cfg.ElevenLabs.Voice, "", false, cfg.Verbose, cfg.ElevenLabs.BaseURL)
+					mcpURL := ResolveMCPURL(cfg.MCP.URL, "", false, cfg.MCP.Transport)
+					opts := BuildTempestOptions(cfg, mcpURL, cfg.ElevenLabs.Voice, "", false, cfg.Verbose, cfg.ElevenLabs.BaseURL)
 					printModeFeedback("Tempest", tempest.Run(cmd.Context(), opts))
 				case ChoiceLighthouse:
 					if err := runLighthouseMenu(cfg); err != nil {
@@ -84,7 +86,7 @@ func BuildModeFeedback(mode string, err error) ModeFeedback {
 	if err == nil {
 		return ModeFeedback{
 			Message:  fmt.Sprintf("%s closed", mode),
-			Recovery: fmt.Sprintf("Select %s again to continue, or choose Quit to exit dirstral.", mode),
+			Recovery: fmt.Sprintf("Select %s again to continue, or choose Exit to leave Dirstral.", mode),
 		}
 	}
 	if errors.Is(err, context.Canceled) {
@@ -121,7 +123,9 @@ func newBreezeCommand(cfg config.Config) *cobra.Command {
 		Use:   "breeze",
 		Short: "Start text-to-text mode",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return breeze.Run(cmd.Context(), options)
+			runOptions := options
+			runOptions.MCPURL = ResolveMCPURL(cfg.MCP.URL, options.MCPURL, cmd.Flags().Changed("mcp"), runOptions.Transport)
+			return breeze.Run(cmd.Context(), runOptions)
 		},
 	}
 	cmd.Flags().StringVar(&options.MCPURL, "mcp", options.MCPURL, "MCP server URL (streamable-http) or stdio command")
@@ -149,7 +153,8 @@ func newTempestCommand(cfg config.Config) *cobra.Command {
 		Use:   "tempest",
 		Short: "Start voice mode",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts := BuildTempestOptions(cfg, mcpURL, voice, device, mute, verbose, baseURL)
+			resolvedMCPURL := ResolveMCPURL(cfg.MCP.URL, mcpURL, cmd.Flags().Changed("mcp"), cfg.MCP.Transport)
+			opts := BuildTempestOptions(cfg, resolvedMCPURL, voice, device, mute, verbose, baseURL)
 			return tempest.Run(cmd.Context(), opts)
 		},
 	}
@@ -202,7 +207,23 @@ func newLighthouseCommand(cfg config.Config) *cobra.Command {
 }
 
 func runBreeze(ctx context.Context, cfg config.Config) error {
-	return breeze.Run(ctx, breeze.Options{MCPURL: cfg.MCP.URL, Transport: cfg.MCP.Transport, Model: cfg.Model, Verbose: cfg.Verbose})
+	mcpURL := ResolveMCPURL(cfg.MCP.URL, "", false, cfg.MCP.Transport)
+	return breeze.Run(ctx, breeze.Options{MCPURL: mcpURL, Transport: cfg.MCP.Transport, Model: cfg.Model, Verbose: cfg.Verbose})
+}
+
+func ResolveMCPURL(defaultURL, explicitURL string, explicitOverride bool, transport string) string {
+	if explicitOverride {
+		return explicitURL
+	}
+	if strings.EqualFold(strings.TrimSpace(transport), "stdio") {
+		return defaultURL
+	}
+	health := host.CheckHealth()
+	activeURL := strings.TrimSpace(health.MCPURL)
+	if health.Ready && activeURL != "" {
+		return activeURL
+	}
+	return defaultURL
 }
 
 func BuildTempestOptions(cfg config.Config, mcpURL, voice, device string, mute, verbose bool, baseURL string) tempest.Options {
@@ -236,10 +257,14 @@ func runLighthouseMenu(cfg config.Config) error {
 		switch result.Chosen {
 		case lighthouseActionStart:
 			printModeHeader("Lighthouse / Start Server")
-			if err := host.Up(context.Background(), host.UpOptions{Listen: cfg.Host.Listen, MCPPath: cfg.Host.MCPPath}); err != nil {
+			if err := host.UpDetached(context.Background(), host.UpOptions{Listen: cfg.Host.Listen, MCPPath: cfg.Host.MCPPath}); err != nil {
 				printModeFeedbackTo("Lighthouse start", err, "Lighthouse menu")
 				continue
 			}
+			if health := host.CheckHealth(); strings.TrimSpace(health.MCPURL) != "" {
+				fmt.Println(statusLine("Lighthouse", "Active endpoint: "+health.MCPURL))
+			}
+			fmt.Println(styleMuted.Render("Server started in background. Use Status for readiness details."))
 			printReturnTo("Lighthouse menu")
 		case lighthouseActionStatus:
 			printModeHeader("Lighthouse / Server Status")

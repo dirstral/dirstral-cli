@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/alibilge/dirstral-cli/internal/host"
 	tea "github.com/charmbracelet/bubbletea"
 	"golang.org/x/term"
 )
@@ -120,6 +121,7 @@ func (m *appModel) updateDynamicItems(msg lighthouseStatusMsg) {
 	case screenLighthouse:
 		// Show/hide Start/Stop based on current state.
 		var items []MenuItem
+		m.menu.SetIntro(buildLighthouseIntro(msg.Health))
 		if msg.Health.Alive {
 			items = []MenuItem{
 				{Label: lighthouseActionStatus, Description: "Check process and endpoint health", Value: lighthouseActionStatus},
@@ -128,12 +130,35 @@ func (m *appModel) updateDynamicItems(msg lighthouseStatusMsg) {
 			}
 		} else {
 			items = []MenuItem{
-				{Label: lighthouseActionStart, Description: "Launch dir2mcp and stream logs", Value: lighthouseActionStart},
+				{Label: lighthouseActionStart, Description: "Launch dir2mcp in background", Value: lighthouseActionStart},
 				{Label: lighthouseActionStatus, Description: "Check process and endpoint health", Value: lighthouseActionStatus},
 				{Label: lighthouseActionBack, Description: "Return to main menu", Value: lighthouseActionBack},
 			}
 		}
 		m.menu.SetItems(items)
+	}
+}
+
+func buildLighthouseIntro(health host.HealthInfo) []string {
+	if !health.Found {
+		return []string{
+			"Manage the local dir2mcp host process.",
+			"Status: stopped",
+			"Endpoint: not running",
+		}
+	}
+	state := "stopped"
+	if health.Alive {
+		state = "running"
+	}
+	endpoint := host.OrUnknown(health.MCPURL)
+	protocol := host.OrUnknown(health.ProtocolHeader)
+	auth := host.OrUnknown(health.AuthSourceType)
+	return []string{
+		"Manage the local dir2mcp host process.",
+		"Status: " + state,
+		"Endpoint: " + endpoint,
+		"Protocol: " + protocol + " · Auth source: " + auth,
 	}
 }
 
