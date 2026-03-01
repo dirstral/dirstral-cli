@@ -26,7 +26,6 @@ type breezeModel struct {
 	viewport  viewport.Model
 	textInput textinput.Model
 	spinner   spinner.Model
-	err       error
 	messages  []string
 	isLoading bool
 	ready     bool
@@ -276,11 +275,11 @@ type approvalReqMsg struct {
 func formatHelp() string {
 	var b strings.Builder
 	b.WriteString(ui.Brand.Render("Commands:\n"))
-	b.WriteString(fmt.Sprintf("  %s  %s\n", ui.Keyword.Render("/help"), ui.Muted.Render("Show help")))
-	b.WriteString(fmt.Sprintf("  %s  %s\n", ui.Keyword.Render("/quit"), ui.Muted.Render("Exit Breeze")))
-	b.WriteString(fmt.Sprintf("  %s  %s\n", ui.Keyword.Render("/list [prefix]"), ui.Muted.Render("List indexed files")))
-	b.WriteString(fmt.Sprintf("  %s  %s\n", ui.Keyword.Render("/search <query>"), ui.Muted.Render("Search corpus")))
-	b.WriteString(fmt.Sprintf("  %s  %s\n", ui.Keyword.Render("/open <rel_path>"), ui.Muted.Render("Open file from index")))
+	fmt.Fprintf(&b, "  %s  %s\n", ui.Keyword.Render("/help"), ui.Muted.Render("Show help"))
+	fmt.Fprintf(&b, "  %s  %s\n", ui.Keyword.Render("/quit"), ui.Muted.Render("Exit Breeze"))
+	fmt.Fprintf(&b, "  %s  %s\n", ui.Keyword.Render("/list [prefix]"), ui.Muted.Render("List indexed files"))
+	fmt.Fprintf(&b, "  %s  %s\n", ui.Keyword.Render("/search <query>"), ui.Muted.Render("Search corpus"))
+	fmt.Fprintf(&b, "  %s  %s\n", ui.Keyword.Render("/open <rel_path>"), ui.Muted.Render("Open file from index"))
 	b.WriteString(ui.Dim("  Any other text is sent to dir2mcp.ask"))
 	return b.String()
 }

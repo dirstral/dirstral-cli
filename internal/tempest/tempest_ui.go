@@ -248,7 +248,9 @@ func (m *tempestModel) recordCmd() tea.Cmd {
 
 func (m *tempestModel) transcribeCmd(path string) tea.Cmd {
 	return func() tea.Msg {
-		defer os.Remove(path)
+		defer func() {
+			_ = os.Remove(path)
+		}()
 		text, err := transcribeElevenLabs(m.ctx, m.opts.BaseURL, path)
 		return transcribeDoneMsg{text: text, err: err}
 	}
@@ -282,7 +284,9 @@ func (m *tempestModel) speakCmd(text string) tea.Cmd {
 		if err != nil {
 			return speakDoneMsg{err: err}
 		}
-		defer os.Remove(path)
+		defer func() {
+			_ = os.Remove(path)
+		}()
 		err = playAudio(m.ctx, path)
 		return speakDoneMsg{err: err}
 	}

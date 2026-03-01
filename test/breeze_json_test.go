@@ -38,7 +38,9 @@ func TestParseInputUsesModelProfileForAsk(t *testing.T) {
 func TestBreezeJSONOutputStructureAndModelPropagation(t *testing.T) {
 	var askK any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer r.Body.Close()
+		defer func() {
+			_ = r.Body.Close()
+		}()
 		var req map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatalf("decode request: %v", err)
