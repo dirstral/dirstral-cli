@@ -151,13 +151,21 @@ func (m MenuModel) View() string {
 		return ""
 	}
 	viewWidth := maxInt(m.width, 1)
-	contentWidth := clampInt(viewWidth-6, 12, 96)
+	menuHorizChrome := 6 // border + default horizontal padding + breathing room
+	if viewWidth >= 56 {
+		menuHorizChrome = 10 // border + wider horizontal padding + breathing room
+	}
+	contentWidth := clampInt(viewWidth-menuHorizChrome, 12, 96)
+	panelWidth := contentWidth + menuHorizChrome - 2
+	showLogo := m.config.ShowLogo && m.width >= 60 && (m.height == 0 || m.height >= 20)
 	tinyHeight := m.height > 0 && m.height < 14
 	compactRows := contentWidth < 28
 
 	menuStyle := styleMenuBox
 	if m.width < 56 {
 		menuStyle = menuStyle.Padding(0, 1)
+	} else {
+		menuStyle = menuStyle.Padding(1, 3)
 	}
 	if m.height > 0 && m.height < 18 {
 		menuStyle = menuStyle.MarginTop(0).MarginBottom(0)
@@ -165,20 +173,39 @@ func (m MenuModel) View() string {
 
 	var headerItems []string
 	if m.config.Title != "" {
-		headerItems = append(headerItems, styleTitle.MaxWidth(contentWidth).Render(m.config.Title))
+		title := styleTitle.MaxWidth(contentWidth).Render(m.config.Title)
+		if showLogo {
+			headerItems = append(headerItems, title)
+		} else {
+			headerItems = append(headerItems, lipgloss.PlaceHorizontal(panelWidth, lipgloss.Center, title))
+		}
 	}
 	for _, line := range m.config.Intro {
-		headerItems = append(headerItems, styleMuted.MaxWidth(contentWidth).Render(line))
+		intro := styleMuted.MaxWidth(contentWidth).Render(line)
+		if showLogo {
+			headerItems = append(headerItems, intro)
+		} else {
+			headerItems = append(headerItems, lipgloss.PlaceHorizontal(panelWidth, lipgloss.Center, intro))
+		}
 	}
-	header := joinVerticalNonEmpty(lipgloss.Center, headerItems...)
+	headerAlign := lipgloss.Center
+	if showLogo {
+		headerAlign = lipgloss.Left
+	}
+	header := joinVerticalNonEmpty(headerAlign, headerItems...)
 
 	var menuLines []string
 	labelWidth := clampInt(contentWidth/3, 8, 28)
-	descWidth := maxInt(contentWidth-labelWidth-8, 0)
+	gutterWidth := 5
+	descWidth := maxInt(contentWidth-labelWidth-gutterWidth-4, 0)
 
 	showCount := len(m.config.Items)
 	if m.revealedCount >= 0 {
 		showCount = m.revealedCount
+	}
+	rowGap := 0
+	if !tinyHeight && !compactRows {
+		rowGap = 1
 	}
 
 	for i, item := range m.config.Items {
@@ -190,15 +217,7 @@ func (m MenuModel) View() string {
 
 		badgeStr := ""
 		if item.Badge != "" {
-			if isSelected {
-				badgeStr = " [" + item.Badge + "]"
-			} else {
-				bs := styleSubtle
-				if item.BadgeStyle != nil {
-					bs = *item.BadgeStyle
-				}
-				badgeStr = " " + bs.Render("["+item.Badge+"]")
-			}
+			badgeStr = " [" + item.Badge + "]"
 		}
 
 		if compactRows || descWidth < 10 {
@@ -213,19 +232,25 @@ func (m MenuModel) View() string {
 
 		paddedLabel := fitText(item.Label+badgeStr, labelWidth)
 		desc := fitText(item.Description, descWidth)
+		marker := styleMuted.Render(" ")
+		labelCell := styleMuted.Width(labelWidth).Render(paddedLabel)
+		descCell := styleDescription.Width(descWidth).Render(desc)
 		if isSelected {
-			row := fmt.Sprintf("  %s %s", styleSelected.Render(">"), styleSelectedRow.Render(" "+paddedLabel+" ")+"   "+styleSelectedDesc.Render(desc))
-			menuLines = append(menuLines, row)
-		} else {
-			row := fmt.Sprintf("    %s   %s", styleMuted.Render(paddedLabel), styleDescription.Render(desc))
-			menuLines = append(menuLines, row)
+			marker = styleSelected.Render(">")
+			labelCell = styleSelectedRow.Width(labelWidth).Render(paddedLabel)
+			descCell = styleSelectedDesc.Width(descWidth).Render(desc)
+		}
+		row := fmt.Sprintf("  %s %s%s%s", marker, labelCell, strings.Repeat(" ", gutterWidth), descCell)
+		menuLines = append(menuLines, row)
+		if rowGap == 1 && i < showCount-1 {
+			menuLines = append(menuLines, "")
 		}
 	}
 	if len(menuLines) == 0 {
 		menuLines = append(menuLines, styleSubtle.Render("  (no options)"))
 	}
 
-	menuBox := menuStyle.MaxWidth(contentWidth + 6).Render(lipgloss.JoinVertical(lipgloss.Left, menuLines...))
+	menuBox := menuStyle.MaxWidth(panelWidth).Render(lipgloss.JoinVertical(lipgloss.Left, menuLines...))
 	controls := m.config.Controls + " · ? help"
 	footer := styleSubtle.MaxWidth(contentWidth).Render(truncateText(controls, contentWidth))
 
@@ -240,7 +265,7 @@ func (m MenuModel) View() string {
 		if tinyHeight {
 			helpText = styleMuted.Render(truncateText("Keys: up/down or j/k move · enter choose · esc/q back · ? toggle help", contentWidth))
 		}
-		helpBox := menuStyle.MaxWidth(contentWidth + 6).Render(helpText)
+		helpBox := menuStyle.MaxWidth(panelWidth).Render(helpText)
 		if tinyHeight {
 			body = joinVerticalNonEmpty(lipgloss.Left, body, helpBox)
 		} else {
@@ -249,7 +274,6 @@ func (m MenuModel) View() string {
 	}
 	content := composeWithPinnedFooter(body, footer, m.height)
 
-	showLogo := m.config.ShowLogo && m.width >= 60 && (m.height == 0 || m.height >= 20)
 	if showLogo {
 		logo := RenderLogo(viewWidth)
 		var b strings.Builder

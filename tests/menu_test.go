@@ -10,7 +10,7 @@ import (
 )
 
 func TestStartMenuItemsOrder(t *testing.T) {
-	want := []string{"Breeze", "Tempest", "Lighthouse", "Quit"}
+	want := []string{"Breeze", "Tempest", "Lighthouse", "Exit"}
 	if got := app.StartMenuItems(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected startup menu options: got %v want %v", got, want)
 	}
