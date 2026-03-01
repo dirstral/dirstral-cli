@@ -1,13 +1,28 @@
 package app
 
-import "github.com/manifoldco/promptui"
+const (
+	lighthouseActionStart  = "Start Server"
+	lighthouseActionStatus = "Server Status"
+	lighthouseActionStop   = "Stop Server"
+	lighthouseActionBack   = "Back"
+)
 
 func chooseLighthouseAction() (string, error) {
-	items := []string{"Start Server", "Server Status", "Stop Server", "Back"}
-	prompt := promptui.Select{Label: "Lighthouse", Items: items, Size: len(items)}
-	_, result, err := prompt.Run()
-	if err != nil {
-		return "Back", err
+	items := LighthouseMenuItems()
+	options := make([]menuOption, 0, len(items))
+	for _, item := range items {
+		options = append(options, menuOption{Label: item, Value: item})
 	}
-	return result, nil
+
+	return runInteractiveMenu(menuSpec{
+		Title:        "Lighthouse",
+		Intro:        []string{"Manage the local dir2mcp host process."},
+		Options:      options,
+		QuitValue:    lighthouseActionBack,
+		ControlsText: "Controls: arrows navigate, Enter select, q/esc back",
+	})
+}
+
+func LighthouseMenuItems() []string {
+	return []string{lighthouseActionStart, lighthouseActionStatus, lighthouseActionStop, lighthouseActionBack}
 }

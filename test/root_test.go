@@ -1,8 +1,9 @@
-package app
+package test
 
 import (
 	"testing"
 
+	"github.com/alibilge/dirstral-cli/internal/app"
 	"github.com/alibilge/dirstral-cli/internal/config"
 )
 
@@ -12,7 +13,7 @@ func TestBuildTempestOptionsPrefersFlags(t *testing.T) {
 	cfg.ElevenLabs.Voice = "DefaultVoice"
 	cfg.ElevenLabs.BaseURL = "https://default-elevenlabs"
 
-	got := buildTempestOptions(cfg, "http://flag-mcp", "FlagVoice", "Mic A", true, true, "https://flag-elevenlabs")
+	got := app.BuildTempestOptions(cfg, "http://flag-mcp", "FlagVoice", "Mic A", true, true, "https://flag-elevenlabs")
 
 	if got.MCPURL != "http://flag-mcp" {
 		t.Fatalf("unexpected mcp url: %s", got.MCPURL)
@@ -40,7 +41,7 @@ func TestBuildTempestOptionsFallsBackToConfig(t *testing.T) {
 	cfg.ElevenLabs.Voice = "DefaultVoice"
 	cfg.ElevenLabs.BaseURL = "https://default-elevenlabs"
 
-	got := buildTempestOptions(cfg, "", "", "", false, false, "")
+	got := app.BuildTempestOptions(cfg, "", "", "", false, false, "")
 
 	if got.MCPURL != cfg.MCP.URL {
 		t.Fatalf("expected config mcp url, got %s", got.MCPURL)

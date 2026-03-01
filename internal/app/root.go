@@ -32,19 +32,26 @@ func newRootCommand(cfg config.Config) *cobra.Command {
 				}
 				switch choice {
 				case ChoiceBreeze:
+					printModeHeader("Breeze")
 					if err := runBreeze(cmd.Context(), cfg); err != nil {
-						fmt.Println("error:", err)
+						printUIError(err)
 					}
+					printReturnHome()
 				case ChoiceTempest:
-					opts := buildTempestOptions(cfg, cfg.MCP.URL, cfg.ElevenLabs.Voice, "", false, cfg.Verbose, cfg.ElevenLabs.BaseURL)
+					printModeHeader("Tempest")
+					opts := BuildTempestOptions(cfg, cfg.MCP.URL, cfg.ElevenLabs.Voice, "", false, cfg.Verbose, cfg.ElevenLabs.BaseURL)
 					if err := tempest.Run(cmd.Context(), opts); err != nil {
-						fmt.Println("error:", err)
+						printUIError(err)
 					}
+					printReturnHome()
 				case ChoiceLighthouse:
+					printModeHeader("Lighthouse")
 					if err := runLighthouseMenu(cfg); err != nil {
-						fmt.Println("error:", err)
+						printUIError(err)
 					}
+					printReturnHome()
 				default:
+					clearScreen()
 					fmt.Println("bye")
 					return nil
 				}
@@ -56,6 +63,21 @@ func newRootCommand(cfg config.Config) *cobra.Command {
 	root.AddCommand(newTempestCommand(cfg))
 	root.AddCommand(newLighthouseCommand(cfg))
 	return root
+}
+
+func printModeHeader(mode string) {
+	clearScreen()
+	fmt.Println(statusLine("Opening", mode))
+	fmt.Println()
+}
+
+func printReturnHome() {
+	fmt.Println()
+	fmt.Println(statusLine("Transition", "Returning to home"))
+}
+
+func printUIError(err error) {
+	fmt.Println(errorLine(err))
 }
 
 func newBreezeCommand(cfg config.Config) *cobra.Command {
@@ -91,7 +113,7 @@ func newTempestCommand(cfg config.Config) *cobra.Command {
 		Use:   "tempest",
 		Short: "Start voice mode",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts := buildTempestOptions(cfg, mcpURL, voice, device, mute, verbose, baseURL)
+			opts := BuildTempestOptions(cfg, mcpURL, voice, device, mute, verbose, baseURL)
 			return tempest.Run(cmd.Context(), opts)
 		},
 	}
@@ -147,7 +169,7 @@ func runBreeze(ctx context.Context, cfg config.Config) error {
 	return breeze.Run(ctx, breeze.Options{MCPURL: cfg.MCP.URL, Transport: cfg.MCP.Transport, Model: cfg.Model, Verbose: cfg.Verbose})
 }
 
-func buildTempestOptions(cfg config.Config, mcpURL, voice, device string, mute, verbose bool, baseURL string) tempest.Options {
+func BuildTempestOptions(cfg config.Config, mcpURL, voice, device string, mute, verbose bool, baseURL string) tempest.Options {
 	if mcpURL == "" {
 		mcpURL = cfg.MCP.URL
 	}
@@ -174,18 +196,24 @@ func runLighthouseMenu(cfg config.Config) error {
 			return err
 		}
 		switch choice {
-		case "Start Server":
+		case lighthouseActionStart:
+			printModeHeader("Lighthouse / Start Server")
 			if err := host.Up(context.Background(), host.UpOptions{Listen: cfg.Host.Listen, MCPPath: cfg.Host.MCPPath}); err != nil {
-				fmt.Println("error:", err)
+				printUIError(err)
 			}
-		case "Server Status":
+			printReturnHome()
+		case lighthouseActionStatus:
+			printModeHeader("Lighthouse / Server Status")
 			if err := host.Status(); err != nil {
-				fmt.Println("error:", err)
+				printUIError(err)
 			}
-		case "Stop Server":
+			printReturnHome()
+		case lighthouseActionStop:
+			printModeHeader("Lighthouse / Stop Server")
 			if err := host.Down(); err != nil {
-				fmt.Println("error:", err)
+				printUIError(err)
 			}
+			printReturnHome()
 		default:
 			return nil
 		}
