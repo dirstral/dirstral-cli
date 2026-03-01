@@ -1,8 +1,2 @@
 # Build artifacts
 /bin/
-/dirstral
-
-# Keep source entrypoint paths visible to git.
-!/cmd/
-!/cmd/dirstral/
-!/cmd/dirstral/**

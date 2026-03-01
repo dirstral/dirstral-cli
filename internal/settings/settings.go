@@ -201,11 +201,9 @@ func (m model) commitEdit() (tea.Model, tea.Cmd) {
 	if changed {
 		if m.fields[m.cursor].Sensitive {
 			m.fields[m.cursor].Value = val
-			m.fields[m.cursor].Source = config.SourceDotEnvLocal
 		} else {
 			config.ApplyField(&m.cfg, key, val)
 			m.fields[m.cursor].Value = val
-			m.fields[m.cursor].Source = config.SourceConfigFile
 		}
 	}
 
@@ -268,6 +266,8 @@ func (m *model) save() {
 		}
 	}
 
+	m.applyPersistedSources()
+
 	m.baseline = snapshotValues(m.fields)
 	m.recomputeDirty()
 	m.errMsg = ""
@@ -304,6 +304,24 @@ type pendingChange struct {
 
 func (m *model) recomputeDirty() {
 	m.dirty = len(m.pendingChanges()) > 0
+}
+
+func (m *model) applyPersistedSources() {
+	for i := range m.fields {
+		before := m.baseline[m.fields[i].Key]
+		if m.fields[i].Value == before {
+			continue
+		}
+		if m.fields[i].Sensitive {
+			if strings.TrimSpace(m.fields[i].Value) == "" {
+				m.fields[i].Source = config.SourceDefault
+			} else {
+				m.fields[i].Source = config.SourceDotEnvLocal
+			}
+			continue
+		}
+		m.fields[i].Source = config.SourceConfigFile
+	}
 }
 
 func (m model) pendingChanges() []pendingChange {
@@ -503,7 +521,11 @@ func (m model) stateLines() []string {
 		if m.statusMsg != "" {
 			lines = append(lines, ui.Green.Render(m.statusMsg))
 		}
-		lines = append(lines, m.pendingChangeLines(4)...)
+		pending := m.pendingChangeLines(4)
+		lines = append(lines, pending...)
+		if len(pending) > 0 {
+			lines = append(lines, settingsSubtleStyle.Render("Source labels update after save."))
+		}
 	}
 
 	return lines
