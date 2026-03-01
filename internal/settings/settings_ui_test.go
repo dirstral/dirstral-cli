@@ -69,3 +69,54 @@ func TestSettingsControlsReflectEditingState(t *testing.T) {
 		t.Fatalf("expected editing controls hint")
 	}
 }
+
+func TestSettingsViewShowsUnsavedChangeList(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+
+	m := initialModel(config.Default())
+	m.width = 120
+	m.height = 30
+
+	modelIndex := findFieldIndex(t, m.fields, "model")
+	m.fields[modelIndex].Value = "mistral-large-latest"
+	m.recomputeDirty()
+
+	view := m.View()
+	if !strings.Contains(view, "Unsaved changes (1):") {
+		t.Fatalf("expected unsaved changes header, got %q", view)
+	}
+	if !strings.Contains(view, "- model: mistral-small-latest -> mistral-large-latest") {
+		t.Fatalf("expected unsaved model diff, got %q", view)
+	}
+}
+
+func TestSettingsViewMasksSensitiveUnsavedValues(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+
+	m := initialModel(config.Default())
+	m.width = 120
+	m.height = 30
+
+	secretIndex := findFieldIndex(t, m.fields, "DIR2MCP_AUTH_TOKEN")
+	m.fields[secretIndex].Value = "very-secret-token"
+	m.recomputeDirty()
+
+	view := m.View()
+	if !strings.Contains(view, "- DIR2MCP_AUTH_TOKEN: (not set) -> ****") {
+		t.Fatalf("expected masked unsaved secret diff, got %q", view)
+	}
+	if strings.Contains(view, "very-secret-token") {
+		t.Fatalf("expected secret value to stay masked")
+	}
+}
+
+func findFieldIndex(t *testing.T, fields []config.FieldInfo, key string) int {
+	t.Helper()
+	for i, f := range fields {
+		if f.Key == key {
+			return i
+		}
+	}
+	t.Fatalf("missing field %q", key)
+	return -1
+}
