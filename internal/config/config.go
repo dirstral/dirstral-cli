@@ -204,6 +204,24 @@ func SaveSecret(key, value string) error {
 	return os.Setenv(key, value)
 }
 
+// DeleteSecret removes a key from .env.local and unsets it in the process env.
+func DeleteSecret(key string) error {
+	const path = ".env.local"
+	env := map[string]string{}
+	existing, err := godotenv.Read(path)
+	if err == nil {
+		env = existing
+	}
+	delete(env, key)
+	if err := godotenv.Write(env, path); err != nil {
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	if err := os.Unsetenv(key); err != nil {
+		return fmt.Errorf("unsetting %s: %w", key, err)
+	}
+	return nil
+}
+
 // fieldDef describes a configurable field for EffectiveFields.
 type fieldDef struct {
 	Key       string

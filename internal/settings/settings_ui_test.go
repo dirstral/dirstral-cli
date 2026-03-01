@@ -1,6 +1,8 @@
 package settings
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -107,6 +109,58 @@ func TestSettingsViewMasksSensitiveUnsavedValues(t *testing.T) {
 	}
 	if strings.Contains(view, "very-secret-token") {
 		t.Fatalf("expected secret value to stay masked")
+	}
+}
+
+func TestSaveDeletesClearedSensitiveValues(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+
+	dir := t.TempDir()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir temp: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(wd)
+	})
+
+	home := filepath.Join(dir, "home")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatalf("mkdir home: %v", err)
+	}
+	t.Setenv("HOME", home)
+
+	if err := config.SaveSecret("DIR2MCP_AUTH_TOKEN", "seed-token"); err != nil {
+		t.Fatalf("seed secret: %v", err)
+	}
+
+	m := initialModel(config.Default())
+	secretIndex := findFieldIndex(t, m.fields, "DIR2MCP_AUTH_TOKEN")
+	m.fields[secretIndex].Value = ""
+	m.recomputeDirty()
+	if !m.dirty {
+		t.Fatalf("expected dirty model before save")
+	}
+
+	m.save()
+	if m.errMsg != "" {
+		t.Fatalf("unexpected save error: %s", m.errMsg)
+	}
+	if m.dirty {
+		t.Fatalf("expected dirty to clear after save")
+	}
+	if _, ok := os.LookupEnv("DIR2MCP_AUTH_TOKEN"); ok {
+		t.Fatalf("expected process env token to be unset")
+	}
+	b, err := os.ReadFile(".env.local")
+	if err != nil {
+		t.Fatalf("read .env.local: %v", err)
+	}
+	if strings.Contains(string(b), "DIR2MCP_AUTH_TOKEN=") {
+		t.Fatalf("expected .env.local token to be removed, got %q", string(b))
 	}
 }
 

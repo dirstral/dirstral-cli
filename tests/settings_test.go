@@ -3,6 +3,7 @@ package test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/alibilge/dirstral-cli/internal/config"
@@ -117,6 +118,29 @@ func TestSaveSecretWritesDotEnvLocalAndEnvironment(t *testing.T) {
 	}
 	if got := os.Getenv("ELEVENLABS_API_KEY"); got != "test-secret" {
 		t.Fatalf("env not updated: got %q", got)
+	}
+}
+
+func TestDeleteSecretRemovesDotEnvLocalAndEnvironment(t *testing.T) {
+	chdirTemp(t)
+	unsetEnv(t, "ELEVENLABS_API_KEY")
+
+	if err := config.SaveSecret("ELEVENLABS_API_KEY", "test-secret"); err != nil {
+		t.Fatalf("seed secret: %v", err)
+	}
+	if err := config.DeleteSecret("ELEVENLABS_API_KEY"); err != nil {
+		t.Fatalf("delete secret: %v", err)
+	}
+
+	b, err := os.ReadFile(".env.local")
+	if err != nil {
+		t.Fatalf("read .env.local: %v", err)
+	}
+	if strings.Contains(string(b), "ELEVENLABS_API_KEY=") {
+		t.Fatalf("expected .env.local to remove ELEVENLABS_API_KEY, got %q", string(b))
+	}
+	if _, ok := os.LookupEnv("ELEVENLABS_API_KEY"); ok {
+		t.Fatalf("expected ELEVENLABS_API_KEY to be unset")
 	}
 }
 

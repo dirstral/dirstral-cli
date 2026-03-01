@@ -249,15 +249,22 @@ func (m *model) save() {
 
 	// Save secrets to .env.local.
 	for _, f := range m.fields {
-		if f.Sensitive && f.Value != "" {
-			envKey := config.EnvVarForField(f.Key)
-			if envKey == "" {
-				envKey = f.Key
-			}
-			if err := config.SaveSecret(envKey, f.Value); err != nil {
-				m.errMsg = fmt.Sprintf("Save secret %s failed: %v", f.Key, err)
-				return
-			}
+		if !f.Sensitive {
+			continue
+		}
+		envKey := config.EnvVarForField(f.Key)
+		if envKey == "" {
+			envKey = f.Key
+		}
+		var err error
+		if strings.TrimSpace(f.Value) == "" {
+			err = config.DeleteSecret(envKey)
+		} else {
+			err = config.SaveSecret(envKey, f.Value)
+		}
+		if err != nil {
+			m.errMsg = fmt.Sprintf("Save secret %s failed: %v", f.Key, err)
+			return
 		}
 	}
 
