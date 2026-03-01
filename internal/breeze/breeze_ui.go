@@ -331,7 +331,7 @@ func renderListFilesString(sc map[string]any) string {
 		if !ok {
 			continue
 		}
-		b.WriteString(fmt.Sprintf("  %s %s\n", ui.Cyan.Render(asString(m["rel_path"])), ui.Dim("("+asString(m["doc_type"])+")")))
+		fmt.Fprintf(&b, "  %s %s\n", ui.Cyan.Render(asString(m["rel_path"])), ui.Dim("("+asString(m["doc_type"])+")"))
 	}
 	return b.String()
 }
@@ -357,9 +357,9 @@ func renderSearchString(sc map[string]any) string {
 		if span, ok := m["span"].(map[string]any); ok {
 			citation = mcp.CitationForSpan(path, span)
 		}
-		b.WriteString(fmt.Sprintf("%s score=%s %s\n", ui.Brand.Render(fmt.Sprintf("%d)", i+1)), ui.Score(score), ui.Citation(citation)))
+		fmt.Fprintf(&b, "%s score=%s %s\n", ui.Brand.Render(fmt.Sprintf("%d)", i+1)), ui.Score(score), ui.Citation(citation))
 		if snippet != "" {
-			b.WriteString(fmt.Sprintf("   %s\n", ui.Muted.Render(snippet)))
+			fmt.Fprintf(&b, "   %s\n", ui.Muted.Render(snippet))
 		}
 	}
 	return b.String()
@@ -388,7 +388,7 @@ func renderAskString(sc map[string]any) string {
 			for i, c := range ordered {
 				styled[i] = ui.Citation(c)
 			}
-			b.WriteString(fmt.Sprintf("%s %s\n", ui.Dim("Sources:"), strings.Join(styled, ui.Dim(", "))))
+			fmt.Fprintf(&b, "%s %s\n", ui.Dim("Sources:"), strings.Join(styled, ui.Dim(", ")))
 		}
 	}
 	return strings.TrimSpace(b.String())
