@@ -39,7 +39,7 @@ func newRootCommand(cfg config.Config) *cobra.Command {
 					printModeFeedback("Breeze", runBreeze(cmd.Context(), cfg))
 				case ChoiceTempest:
 					printModeHeader("Tempest")
-					mcpURL := ResolveMCPURL(cfg.MCP.URL, "", false)
+					mcpURL := ResolveMCPURL(cfg.MCP.URL, "", false, cfg.MCP.Transport)
 					opts := BuildTempestOptions(cfg, mcpURL, cfg.ElevenLabs.Voice, "", false, cfg.Verbose, cfg.ElevenLabs.BaseURL)
 					printModeFeedback("Tempest", tempest.Run(cmd.Context(), opts))
 				case ChoiceLighthouse:
@@ -124,7 +124,7 @@ func newBreezeCommand(cfg config.Config) *cobra.Command {
 		Short: "Start text-to-text mode",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			runOptions := options
-			runOptions.MCPURL = ResolveMCPURL(cfg.MCP.URL, options.MCPURL, cmd.Flags().Changed("mcp"))
+			runOptions.MCPURL = ResolveMCPURL(cfg.MCP.URL, options.MCPURL, cmd.Flags().Changed("mcp"), runOptions.Transport)
 			return breeze.Run(cmd.Context(), runOptions)
 		},
 	}
@@ -153,7 +153,7 @@ func newTempestCommand(cfg config.Config) *cobra.Command {
 		Use:   "tempest",
 		Short: "Start voice mode",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resolvedMCPURL := ResolveMCPURL(cfg.MCP.URL, mcpURL, cmd.Flags().Changed("mcp"))
+			resolvedMCPURL := ResolveMCPURL(cfg.MCP.URL, mcpURL, cmd.Flags().Changed("mcp"), cfg.MCP.Transport)
 			opts := BuildTempestOptions(cfg, resolvedMCPURL, voice, device, mute, verbose, baseURL)
 			return tempest.Run(cmd.Context(), opts)
 		},
@@ -207,13 +207,16 @@ func newLighthouseCommand(cfg config.Config) *cobra.Command {
 }
 
 func runBreeze(ctx context.Context, cfg config.Config) error {
-	mcpURL := ResolveMCPURL(cfg.MCP.URL, "", false)
+	mcpURL := ResolveMCPURL(cfg.MCP.URL, "", false, cfg.MCP.Transport)
 	return breeze.Run(ctx, breeze.Options{MCPURL: mcpURL, Transport: cfg.MCP.Transport, Model: cfg.Model, Verbose: cfg.Verbose})
 }
 
-func ResolveMCPURL(defaultURL, explicitURL string, explicitOverride bool) string {
+func ResolveMCPURL(defaultURL, explicitURL string, explicitOverride bool, transport string) string {
 	if explicitOverride {
 		return explicitURL
+	}
+	if strings.EqualFold(strings.TrimSpace(transport), "stdio") {
+		return defaultURL
 	}
 	health := host.CheckHealth()
 	activeURL := strings.TrimSpace(health.MCPURL)

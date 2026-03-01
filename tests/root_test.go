@@ -99,7 +99,7 @@ func TestBuildTempestOptionsFallsBackToConfig(t *testing.T) {
 }
 
 func TestResolveMCPURLPrefersExplicitOverride(t *testing.T) {
-	got := app.ResolveMCPURL("http://default-mcp", "http://override-mcp", true)
+	got := app.ResolveMCPURL("http://default-mcp", "http://override-mcp", true, "streamable-http")
 	if got != "http://override-mcp" {
 		t.Fatalf("expected explicit override to win, got %q", got)
 	}
@@ -119,7 +119,7 @@ func TestResolveMCPURLUsesActiveHostStateWhenNoOverride(t *testing.T) {
 		_ = host.ClearState()
 	})
 
-	got := app.ResolveMCPURL("http://default-mcp", "", false)
+	got := app.ResolveMCPURL("http://default-mcp", "", false, "streamable-http")
 	if got != state.MCPURL {
 		t.Fatalf("expected active host endpoint %q, got %q", state.MCPURL, got)
 	}
@@ -129,9 +129,26 @@ func TestResolveMCPURLFallsBackToDefaultWithoutActiveHost(t *testing.T) {
 	setTestConfigDir(t)
 	_ = host.ClearState()
 
-	got := app.ResolveMCPURL("http://default-mcp", "", false)
+	got := app.ResolveMCPURL("http://default-mcp", "", false, "streamable-http")
 	if got != "http://default-mcp" {
 		t.Fatalf("expected default endpoint, got %q", got)
+	}
+}
+
+func TestResolveMCPURLDoesNotUseActiveHTTPWhenTransportIsStdio(t *testing.T) {
+	setTestConfigDir(t)
+
+	state := host.State{PID: os.Getpid(), StartedAt: "now", MCPURL: "http://active-host/mcp"}
+	if err := host.SaveState(state); err != nil {
+		t.Fatalf("save host state: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = host.ClearState()
+	})
+
+	got := app.ResolveMCPURL("dir2mcp mcp serve --stdio", "", false, "stdio")
+	if got != "dir2mcp mcp serve --stdio" {
+		t.Fatalf("expected stdio default command, got %q", got)
 	}
 }
 
