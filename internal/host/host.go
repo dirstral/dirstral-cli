@@ -187,15 +187,18 @@ func UpDetached(ctx context.Context, opts UpOptions) error {
 	if err != nil {
 		return err
 	}
-	defer func() {
-		_ = logFile.Close()
-	}()
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 
 	if err := cmd.Start(); err != nil {
+		_ = logFile.Close()
 		return err
 	}
+
+	go func() {
+		_ = cmd.Wait()
+		_ = logFile.Close()
+	}()
 
 	state := State{
 		PID:       cmd.Process.Pid,
@@ -210,6 +213,10 @@ func UpDetached(ctx context.Context, opts UpOptions) error {
 	}
 
 	if !deterministic {
+		// captureEndpoint exits when one of the following happens:
+		// - connection.json appears with a valid endpoint
+		// - the managed process exits
+		// - the capture timeout elapses (prevents long-lived goroutine leaks)
 		go captureEndpoint(make(chan struct{}), state.PID, state.RootDir)
 	}
 
@@ -244,8 +251,8 @@ func Status() error {
 		readyStr = ui.Green.Render("true")
 	}
 	fmt.Printf("%s endpoint=%s reachable=%s mcp_ready=%s\n", ui.Brand.Render("lighthouse:"), ui.Cyan.Render(health.MCPURL), reachStr, readyStr)
-	fmt.Printf("%s protocol=%s session_header=%s\n", ui.Brand.Render("lighthouse:"), ui.Cyan.Render(orUnknown(health.ProtocolHeader)), ui.Cyan.Render(orUnknown(health.SessionHeaderName)))
-	fmt.Printf("%s auth_source=%s\n", ui.Brand.Render("lighthouse:"), ui.Cyan.Render(orUnknown(health.AuthSourceType)))
+	fmt.Printf("%s protocol=%s session_header=%s\n", ui.Brand.Render("lighthouse:"), ui.Cyan.Render(OrUnknown(health.ProtocolHeader)), ui.Cyan.Render(OrUnknown(health.SessionHeaderName)))
+	fmt.Printf("%s auth_source=%s\n", ui.Brand.Render("lighthouse:"), ui.Cyan.Render(OrUnknown(health.AuthSourceType)))
 	if health.LastError != "" {
 		fmt.Printf("%s detail=%s\n", ui.Brand.Render("lighthouse:"), ui.Dim(health.LastError))
 	}
@@ -433,7 +440,7 @@ func CheckHealth() HealthInfo {
 	}
 }
 
-func orUnknown(value string) string {
+func OrUnknown(value string) string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
 		return "unknown"
@@ -540,6 +547,7 @@ func captureEndpoint(stop <-chan struct{}, pid int, rootDir string) {
 	if pid <= 0 || strings.TrimSpace(rootDir) == "" {
 		return
 	}
+	deadline := time.Now().Add(2 * time.Minute)
 	ticker := time.NewTicker(300 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -547,6 +555,9 @@ func captureEndpoint(stop <-chan struct{}, pid int, rootDir string) {
 		case <-stop:
 			return
 		case <-ticker.C:
+			if time.Now().After(deadline) {
+				return
+			}
 			if !processAlive(pid) {
 				return
 			}
@@ -597,7 +608,11 @@ type connectionSession struct {
 func readConnectionContractDetails(state State) (protocolHeader, sessionHeaderName, authSourceType string) {
 	root := strings.TrimSpace(state.RootDir)
 	if root == "" {
-		root = resolveRootDir("", state.WorkDir)
+		workDir := strings.TrimSpace(state.WorkDir)
+		if workDir == "" {
+			return "", "", ""
+		}
+		root = resolveRootDir("", workDir)
 	}
 	if root == "" {
 		return "", "", ""

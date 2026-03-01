@@ -3,7 +3,6 @@ package app
 import (
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/alibilge/dirstral-cli/internal/host"
 	tea "github.com/charmbracelet/bubbletea"
@@ -152,18 +151,9 @@ func buildLighthouseIntro(health host.HealthInfo) []string {
 	if health.Alive {
 		state = "running"
 	}
-	endpoint := strings.TrimSpace(health.MCPURL)
-	if endpoint == "" {
-		endpoint = "unknown"
-	}
-	protocol := strings.TrimSpace(health.ProtocolHeader)
-	if protocol == "" {
-		protocol = "unknown"
-	}
-	auth := strings.TrimSpace(health.AuthSourceType)
-	if auth == "" {
-		auth = "unknown"
-	}
+	endpoint := host.OrUnknown(health.MCPURL)
+	protocol := host.OrUnknown(health.ProtocolHeader)
+	auth := host.OrUnknown(health.AuthSourceType)
 	return []string{
 		"Manage the local dir2mcp host process.",
 		"Status: " + state,
