@@ -150,8 +150,18 @@ func (m MenuModel) View() string {
 	if m.width == 0 {
 		return ""
 	}
-	viewWidth := maxInt(m.width, 40)
-	contentWidth := clampInt(viewWidth-6, 30, 96)
+	viewWidth := maxInt(m.width, 1)
+	contentWidth := clampInt(viewWidth-6, 12, 96)
+	tinyHeight := m.height > 0 && m.height < 14
+	compactRows := contentWidth < 28
+
+	menuStyle := styleMenuBox
+	if m.width < 56 {
+		menuStyle = menuStyle.Padding(0, 1)
+	}
+	if m.height > 0 && m.height < 18 {
+		menuStyle = menuStyle.MarginTop(0).MarginBottom(0)
+	}
 
 	var headerItems []string
 	if m.config.Title != "" {
@@ -160,11 +170,11 @@ func (m MenuModel) View() string {
 	for _, line := range m.config.Intro {
 		headerItems = append(headerItems, styleMuted.MaxWidth(contentWidth).Render(line))
 	}
-	header := lipgloss.JoinVertical(lipgloss.Center, headerItems...)
+	header := joinVerticalNonEmpty(lipgloss.Center, headerItems...)
 
 	var menuLines []string
-	labelWidth := clampInt(contentWidth/3, 12, 28)
-	descWidth := maxInt(contentWidth-labelWidth-8, 12)
+	labelWidth := clampInt(contentWidth/3, 8, 28)
+	descWidth := maxInt(contentWidth-labelWidth-8, 0)
 
 	showCount := len(m.config.Items)
 	if m.revealedCount >= 0 {
@@ -191,9 +201,18 @@ func (m MenuModel) View() string {
 			}
 		}
 
+		if compactRows || descWidth < 10 {
+			label := truncateText(item.Label+badgeStr, maxInt(contentWidth-6, 4))
+			if isSelected {
+				menuLines = append(menuLines, fmt.Sprintf(" %s %s", styleSelected.Render(">"), styleSelectedRow.Render(" "+label+" ")))
+			} else {
+				menuLines = append(menuLines, fmt.Sprintf("   %s", styleMuted.Render(label)))
+			}
+			continue
+		}
+
 		paddedLabel := fitText(item.Label+badgeStr, labelWidth)
 		desc := fitText(item.Description, descWidth)
-
 		if isSelected {
 			row := fmt.Sprintf("  %s %s", styleSelected.Render(">"), styleSelectedRow.Render(" "+paddedLabel+" ")+"   "+styleSelectedDesc.Render(desc))
 			menuLines = append(menuLines, row)
@@ -202,18 +221,36 @@ func (m MenuModel) View() string {
 			menuLines = append(menuLines, row)
 		}
 	}
-
-	menuBox := styleMenuBox.MaxWidth(contentWidth + 6).Render(lipgloss.JoinVertical(lipgloss.Left, menuLines...))
-	controls := m.config.Controls + " · ? help"
-	footer := styleSubtle.MaxWidth(contentWidth).Render(controls)
-
-	content := lipgloss.JoinVertical(lipgloss.Center, header, menuBox, footer)
-	if m.helpVisible {
-		helpBox := styleMenuBox.MaxWidth(contentWidth + 6).Render(menuHelpText(contentWidth))
-		content = lipgloss.JoinVertical(lipgloss.Center, header, menuBox, helpBox, footer)
+	if len(menuLines) == 0 {
+		menuLines = append(menuLines, styleSubtle.Render("  (no options)"))
 	}
 
-	if m.config.ShowLogo {
+	menuBox := menuStyle.MaxWidth(contentWidth + 6).Render(lipgloss.JoinVertical(lipgloss.Left, menuLines...))
+	controls := m.config.Controls + " · ? help"
+	footer := styleSubtle.MaxWidth(contentWidth).Render(truncateText(controls, contentWidth))
+
+	var body string
+	if tinyHeight {
+		body = joinVerticalNonEmpty(lipgloss.Left, header, menuBox)
+	} else {
+		body = joinVerticalNonEmpty(lipgloss.Center, header, menuBox)
+	}
+	if m.helpVisible {
+		helpText := menuHelpText(contentWidth)
+		if tinyHeight {
+			helpText = styleMuted.Render(truncateText("Keys: up/down or j/k move · enter choose · esc/q back · ? toggle help", contentWidth))
+		}
+		helpBox := menuStyle.MaxWidth(contentWidth + 6).Render(helpText)
+		if tinyHeight {
+			body = joinVerticalNonEmpty(lipgloss.Left, body, helpBox)
+		} else {
+			body = joinVerticalNonEmpty(lipgloss.Center, body, helpBox)
+		}
+	}
+	content := composeWithPinnedFooter(body, footer, m.height)
+
+	showLogo := m.config.ShowLogo && m.width >= 60 && (m.height == 0 || m.height >= 20)
+	if showLogo {
 		logo := RenderLogo(viewWidth)
 		var b strings.Builder
 		b.WriteString(logo)
@@ -233,10 +270,17 @@ func (m MenuModel) View() string {
 				b.WriteByte('\n')
 			}
 		}
-		return b.String()
+		return composeWithPinnedFooter(b.String(), "", m.height)
 	}
 
-	return lipgloss.Place(viewWidth, m.height, lipgloss.Center, lipgloss.Center, content)
+	if m.height <= 0 {
+		return content
+	}
+	vAlign := lipgloss.Center
+	if tinyHeight {
+		vAlign = lipgloss.Top
+	}
+	return lipgloss.Place(viewWidth, m.height, lipgloss.Center, vAlign, content)
 }
 
 func menuHelpText(width int) string {
@@ -247,7 +291,65 @@ func menuHelpText(width int) string {
 		styleMuted.Render("esc/q           back/quit"),
 		styleMuted.Render("? or ctrl+k     toggle this help"),
 	}
-	return lipgloss.NewStyle().MaxWidth(maxInt(width-2, 24)).Render(strings.Join(lines, "\n"))
+	return lipgloss.NewStyle().MaxWidth(maxInt(width-2, 12)).Render(strings.Join(lines, "\n"))
+}
+
+func composeWithPinnedFooter(body, footer string, height int) string {
+	if height <= 0 {
+		return joinVerticalNonEmpty(lipgloss.Left, body, footer)
+	}
+	bodyLines := splitLines(body)
+	footerLines := splitLines(footer)
+	if len(footerLines) >= height {
+		return strings.Join(footerLines[:height], "\n")
+	}
+	bodyBudget := height - len(footerLines)
+	if bodyBudget < len(bodyLines) {
+		if bodyBudget <= 0 {
+			bodyLines = nil
+		} else {
+			bodyLines = bodyLines[:bodyBudget]
+		}
+	}
+	lines := make([]string, 0, len(bodyLines)+len(footerLines))
+	lines = append(lines, bodyLines...)
+	lines = append(lines, footerLines...)
+	return strings.Join(lines, "\n")
+}
+
+func joinVerticalNonEmpty(pos lipgloss.Position, items ...string) string {
+	nonEmpty := make([]string, 0, len(items))
+	for _, item := range items {
+		if strings.TrimSpace(item) == "" {
+			continue
+		}
+		nonEmpty = append(nonEmpty, item)
+	}
+	if len(nonEmpty) == 0 {
+		return ""
+	}
+	return lipgloss.JoinVertical(pos, nonEmpty...)
+}
+
+func splitLines(s string) []string {
+	if s == "" {
+		return nil
+	}
+	return strings.Split(s, "\n")
+}
+
+func truncateText(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	r := []rune(strings.TrimSpace(s))
+	if len(r) <= width {
+		return string(r)
+	}
+	if width <= 3 {
+		return string(r[:width])
+	}
+	return string(r[:width-3]) + "..."
 }
 
 func clampInt(v, minV, maxV int) int {
