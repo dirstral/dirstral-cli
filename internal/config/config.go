@@ -1,7 +1,9 @@
 package config
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +11,25 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/joho/godotenv"
 )
+
+// FieldSource indicates where a config value originates.
+type FieldSource string
+
+const (
+	SourceDefault     FieldSource = "default"
+	SourceConfigFile  FieldSource = "config.toml"
+	SourceDotEnv      FieldSource = ".env"
+	SourceDotEnvLocal FieldSource = ".env.local"
+	SourceEnv         FieldSource = "env"
+)
+
+// FieldInfo describes a single configurable field and its provenance.
+type FieldInfo struct {
+	Key       string
+	Value     string
+	Source    FieldSource
+	Sensitive bool
+}
 
 type Config struct {
 	MCP        MCPConfig        `toml:"mcp"`
@@ -138,4 +159,262 @@ func mergeEnv(cfg *Config) {
 	if v := strings.TrimSpace(os.Getenv("DIRSTRAL_HOST_MCP_PATH")); v != "" {
 		cfg.Host.MCPPath = v
 	}
+}
+
+// ConfigPath returns the path to the user's config.toml file.
+func ConfigPath() (string, error) {
+	base, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "dirstral", "config.toml"), nil
+}
+
+// Save writes the config to ~/.config/dirstral/config.toml.
+func Save(cfg Config) error {
+	path, err := ConfigPath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	var buf bytes.Buffer
+	enc := toml.NewEncoder(&buf)
+	if err := enc.Encode(cfg); err != nil {
+		return fmt.Errorf("encoding config: %w", err)
+	}
+	return os.WriteFile(path, buf.Bytes(), 0o644)
+}
+
+// SaveSecret writes a key=value pair into .env.local.
+// If the key already exists it is updated; otherwise it is appended.
+// The environment variable is also set in the current process.
+func SaveSecret(key, value string) error {
+	const path = ".env.local"
+	env := map[string]string{}
+	existing, err := godotenv.Read(path)
+	if err == nil {
+		env = existing
+	}
+	env[key] = value
+	if err := godotenv.Write(env, path); err != nil {
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	return os.Setenv(key, value)
+}
+
+// fieldDef describes a configurable field for EffectiveFields.
+type fieldDef struct {
+	Key       string
+	EnvVar    string
+	Sensitive bool
+}
+
+var fieldDefs = []fieldDef{
+	{Key: "mcp.url", EnvVar: "DIRSTRAL_MCP_URL"},
+	{Key: "mcp.transport", EnvVar: "DIRSTRAL_MCP_TRANSPORT"},
+	{Key: "model", EnvVar: "DIRSTRAL_MODEL"},
+	{Key: "verbose", EnvVar: "DIRSTRAL_VERBOSE"},
+	{Key: "host.listen", EnvVar: "DIRSTRAL_HOST_LISTEN"},
+	{Key: "host.mcp_path", EnvVar: "DIRSTRAL_HOST_MCP_PATH"},
+	{Key: "elevenlabs.base_url", EnvVar: "ELEVENLABS_BASE_URL"},
+	{Key: "elevenlabs.voice", EnvVar: "DIRSTRAL_VOICE"},
+	{Key: "DIR2MCP_AUTH_TOKEN", EnvVar: "DIR2MCP_AUTH_TOKEN", Sensitive: true},
+	{Key: "ELEVENLABS_API_KEY", EnvVar: "ELEVENLABS_API_KEY", Sensitive: true},
+}
+
+// EnvVarForField returns the environment variable mapped to a field key.
+func EnvVarForField(key string) string {
+	for _, fd := range fieldDefs {
+		if fd.Key == key {
+			return fd.EnvVar
+		}
+	}
+	return ""
+}
+
+// fieldValueFromConfig extracts a config field value by key name.
+func fieldValueFromConfig(cfg Config, key string) string {
+	switch key {
+	case "mcp.url":
+		return cfg.MCP.URL
+	case "mcp.transport":
+		return cfg.MCP.Transport
+	case "model":
+		return cfg.Model
+	case "verbose":
+		if cfg.Verbose {
+			return "true"
+		}
+		return "false"
+	case "host.listen":
+		return cfg.Host.Listen
+	case "host.mcp_path":
+		return cfg.Host.MCPPath
+	case "elevenlabs.base_url":
+		return cfg.ElevenLabs.BaseURL
+	case "elevenlabs.voice":
+		return cfg.ElevenLabs.Voice
+	default:
+		return ""
+	}
+}
+
+// readDotFile reads a dotenv file and returns its key-value pairs.
+// Returns nil map if the file does not exist.
+func readDotFile(name string) map[string]string {
+	vals, err := godotenv.Read(name)
+	if err != nil {
+		return nil
+	}
+	return vals
+}
+
+// EffectiveFields returns info about each configurable field including
+// which source provided its current value, checked in precedence order:
+// env var → .env.local → .env → config.toml → default.
+func EffectiveFields(cfg Config) []FieldInfo {
+	dotEnvLocal := readDotFile(".env.local")
+	dotEnv := readDotFile(".env")
+
+	// Load config.toml into a separate struct to check overrides.
+	fileCfg := Default()
+	_ = mergeUserConfig(&fileCfg)
+
+	def := Default()
+	result := make([]FieldInfo, 0, len(fieldDefs))
+
+	for _, fd := range fieldDefs {
+		fi := FieldInfo{
+			Key:       fd.Key,
+			Sensitive: fd.Sensitive,
+		}
+
+		// For secret-only fields, the value only comes from env / dotenv.
+		if fd.Sensitive {
+			fi.Value = os.Getenv(fd.EnvVar)
+			fi.Source = resolveSecretSource(fd.EnvVar, dotEnvLocal, dotEnv)
+			result = append(result, fi)
+			continue
+		}
+
+		// Check precedence: env → .env.local → .env → config.toml → default.
+		if v, ok := os.LookupEnv(fd.EnvVar); ok && strings.TrimSpace(v) != "" {
+			fi.Value = strings.TrimSpace(v)
+			// Disambiguate: was it set in shell env or loaded from dotenv?
+			if _, inLocal := dotEnvLocal[fd.EnvVar]; inLocal {
+				fi.Source = SourceDotEnvLocal
+			} else if _, inDot := dotEnv[fd.EnvVar]; inDot {
+				fi.Source = SourceDotEnv
+			} else {
+				fi.Source = SourceEnv
+			}
+			result = append(result, fi)
+			continue
+		}
+
+		// Check config.toml (compare against default to detect overrides).
+		fileVal := fieldValueFromConfig(fileCfg, fd.Key)
+		defVal := fieldValueFromConfig(def, fd.Key)
+		if fileVal != defVal {
+			fi.Value = fileVal
+			fi.Source = SourceConfigFile
+			result = append(result, fi)
+			continue
+		}
+
+		// Default value.
+		fi.Value = fieldValueFromConfig(cfg, fd.Key)
+		fi.Source = SourceDefault
+		result = append(result, fi)
+	}
+	return result
+}
+
+// resolveSecretSource determines the source for a secret env var.
+func resolveSecretSource(envVar string, dotEnvLocal, dotEnv map[string]string) FieldSource {
+	if _, ok := dotEnvLocal[envVar]; ok {
+		return SourceDotEnvLocal
+	}
+	if _, ok := dotEnv[envVar]; ok {
+		return SourceDotEnv
+	}
+	if _, ok := os.LookupEnv(envVar); ok {
+		return SourceEnv
+	}
+	return SourceDefault
+}
+
+// ValidateField checks whether value is valid for the given field key.
+func ValidateField(key, value string) error {
+	switch key {
+	case "mcp.url":
+		if strings.TrimSpace(value) == "" {
+			return errors.New("mcp.url must not be empty")
+		}
+	case "mcp.transport":
+		if value != "streamable-http" && value != "stdio" {
+			return fmt.Errorf("mcp.transport must be \"streamable-http\" or \"stdio\", got %q", value)
+		}
+	case "model":
+		if strings.TrimSpace(value) == "" {
+			return errors.New("model must not be empty")
+		}
+	case "verbose":
+		if value != "true" && value != "false" {
+			return fmt.Errorf("verbose must be \"true\" or \"false\", got %q", value)
+		}
+	case "host.listen":
+		if !strings.Contains(value, ":") {
+			return errors.New("host.listen must contain \":\" (e.g. \"127.0.0.1:8087\")")
+		}
+	case "host.mcp_path":
+		if !strings.HasPrefix(value, "/") {
+			return errors.New("host.mcp_path must start with \"/\"")
+		}
+	case "elevenlabs.base_url":
+		if strings.TrimSpace(value) == "" {
+			return errors.New("elevenlabs.base_url must not be empty")
+		}
+		if !strings.HasPrefix(value, "http") {
+			return errors.New("elevenlabs.base_url must start with \"http\"")
+		}
+	case "elevenlabs.voice":
+		if strings.TrimSpace(value) == "" {
+			return errors.New("elevenlabs.voice must not be empty")
+		}
+	case "DIR2MCP_AUTH_TOKEN", "ELEVENLABS_API_KEY":
+		if value != "" && strings.TrimSpace(value) == "" {
+			return fmt.Errorf("%s must not be whitespace-only", key)
+		}
+	}
+	return nil
+}
+
+// ApplyField sets a field on the config struct by key name.
+func ApplyField(cfg *Config, key, value string) {
+	switch key {
+	case "mcp.url":
+		cfg.MCP.URL = value
+	case "mcp.transport":
+		cfg.MCP.Transport = value
+	case "model":
+		cfg.Model = value
+	case "verbose":
+		cfg.Verbose = strings.EqualFold(value, "true") || value == "1"
+	case "host.listen":
+		cfg.Host.Listen = value
+	case "host.mcp_path":
+		cfg.Host.MCPPath = value
+	case "elevenlabs.base_url":
+		cfg.ElevenLabs.BaseURL = value
+	case "elevenlabs.voice":
+		cfg.ElevenLabs.Voice = value
+	}
+}
+
+// DefaultValueForField returns the default value for a field key.
+func DefaultValueForField(key string) string {
+	return fieldValueFromConfig(Default(), key)
 }
