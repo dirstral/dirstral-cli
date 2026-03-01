@@ -1,7 +1,6 @@
 package tempest
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -18,7 +17,7 @@ import (
 	"time"
 
 	"github.com/alibilge/dirstral-cli/internal/mcp"
-	"github.com/alibilge/dirstral-cli/internal/ui"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 type Options struct {
@@ -35,59 +34,16 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 
-	fmt.Println(ui.Dim("Tempest mode: press Enter to record, type /quit to exit."))
 	client := mcp.New(opts.MCPURL, opts.Verbose)
 	if err := client.Initialize(ctx); err != nil {
 		return err
 	}
-	reader := bufio.NewReader(os.Stdin)
 
-	for {
-		fmt.Print(ui.Prompt("tempest"))
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			return err
-		}
-		if strings.TrimSpace(line) == "/quit" {
-			return nil
-		}
-		audioPath, err := recordAudio(ctx, opts.Device)
-		if err != nil {
-			return fmt.Errorf("recording failed: %w", err)
-		}
-		transcript, err := transcribeElevenLabs(ctx, opts.BaseURL, audioPath)
-		_ = os.Remove(audioPath)
-		if err != nil {
-			fmt.Println(ui.Errorf("transcription: %v", err))
-			continue
-		}
-		fmt.Printf("%s %s\n", ui.Dim("you said:"), transcript)
-
-		res, err := client.CallTool(ctx, "dir2mcp.ask", map[string]any{"question": transcript, "k": 8})
-		if err != nil {
-			fmt.Println(ui.Errorf("tool call: %v", err))
-			continue
-		}
-		answer := extractAnswer(res)
-		fmt.Printf("%s %s\n", ui.Brand.Render("assistant:"), answer)
-
-		if opts.Mute {
-			continue
-		}
-		voiceID := opts.Voice
-		if voiceID == "" {
-			voiceID = "Rachel"
-		}
-		ttsPath, err := synthesizeElevenLabs(ctx, opts.BaseURL, voiceID, answer)
-		if err != nil {
-			fmt.Println(ui.Errorf("tts: %v", err))
-			continue
-		}
-		if err := playAudio(ctx, ttsPath); err != nil {
-			fmt.Println(ui.Errorf("playback: %v", err))
-		}
-		_ = os.Remove(ttsPath)
+	p := tea.NewProgram(initialModel(ctx, client, opts), tea.WithAltScreen())
+	if _, err := p.Run(); err != nil {
+		return err
 	}
+	return nil
 }
 
 func extractAnswer(res *mcp.ToolCallResult) string {
