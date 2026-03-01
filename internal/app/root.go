@@ -9,6 +9,7 @@ import (
 	"github.com/alibilge/dirstral-cli/internal/breeze"
 	"github.com/alibilge/dirstral-cli/internal/config"
 	"github.com/alibilge/dirstral-cli/internal/host"
+	"github.com/alibilge/dirstral-cli/internal/mcp"
 	"github.com/alibilge/dirstral-cli/internal/tempest"
 	"github.com/spf13/cobra"
 )
@@ -57,6 +58,7 @@ func newRootCommand(cfg config.Config) *cobra.Command {
 	root.AddCommand(newBreezeCommand(cfg))
 	root.AddCommand(newTempestCommand(cfg))
 	root.AddCommand(newLighthouseCommand(cfg))
+	root.AddCommand(newManifestCommand(cfg))
 	return root
 }
 
@@ -206,13 +208,67 @@ func newLighthouseCommand(cfg config.Config) *cobra.Command {
 	return cmd
 }
 
+func newManifestCommand(cfg config.Config) *cobra.Command {
+	var mcpURL string
+	var transport string
+	var asJSON bool
+	var verbose bool
+
+	mcpURL = cfg.MCP.URL
+	transport = cfg.MCP.Transport
+	verbose = cfg.Verbose
+
+	cmd := &cobra.Command{
+		Use:   "manifest",
+		Short: "Print MCP capability manifest",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			resolvedMCPURL := ResolveMCPURL(cfg.MCP.URL, mcpURL, cmd.Flags().Changed("mcp"), transport)
+			client := mcp.NewWithTransport(resolvedMCPURL, transport, verbose)
+			defer func() {
+				_ = client.Close()
+			}()
+
+			if err := client.Initialize(cmd.Context()); err != nil {
+				return fmt.Errorf("mcp initialize failed: %w", err)
+			}
+			manifest, err := mcp.BuildCapabilityManifest(cmd.Context(), client)
+			if err != nil {
+				return fmt.Errorf("manifest build failed: %w", err)
+			}
+
+			if asJSON {
+				payload, err := mcp.RenderCapabilityManifestJSON(manifest)
+				if err != nil {
+					return fmt.Errorf("manifest render failed: %w", err)
+				}
+				fmt.Println(string(payload))
+				return nil
+			}
+
+			fmt.Println(mcp.RenderCapabilityManifestHuman(manifest))
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&mcpURL, "mcp", mcpURL, "MCP server URL (streamable-http) or stdio command")
+	cmd.Flags().StringVar(&transport, "transport", transport, "MCP transport (streamable-http|stdio)")
+	cmd.Flags().BoolVar(&asJSON, "json", asJSON, "Print JSON manifest")
+	cmd.Flags().BoolVar(&verbose, "verbose", verbose, "Verbose MCP logging")
+	return cmd
+}
+
 func runBreeze(ctx context.Context, cfg config.Config) error {
 	mcpURL := ResolveMCPURL(cfg.MCP.URL, "", false, cfg.MCP.Transport)
 	return breeze.Run(ctx, breeze.Options{MCPURL: mcpURL, Transport: cfg.MCP.Transport, Model: cfg.Model, Verbose: cfg.Verbose})
 }
 
 func ResolveMCPURL(defaultURL, explicitURL string, explicitOverride bool, transport string) string {
+	defaultURL = strings.TrimSpace(defaultURL)
+	explicitURL = strings.TrimSpace(explicitURL)
 	if explicitOverride {
+		if explicitURL == "" {
+			return defaultURL
+		}
 		return explicitURL
 	}
 	if strings.EqualFold(strings.TrimSpace(transport), "stdio") {
