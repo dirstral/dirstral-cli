@@ -86,7 +86,7 @@ func BuildModeFeedback(mode string, err error) ModeFeedback {
 	if err == nil {
 		return ModeFeedback{
 			Message:  fmt.Sprintf("%s closed", mode),
-			Recovery: fmt.Sprintf("Select %s again to continue, or choose Quit to exit dirstral.", mode),
+			Recovery: fmt.Sprintf("Select %s again to continue, or choose Exit to leave Dirstral.", mode),
 		}
 	}
 	if errors.Is(err, context.Canceled) {
@@ -254,10 +254,14 @@ func runLighthouseMenu(cfg config.Config) error {
 		switch result.Chosen {
 		case lighthouseActionStart:
 			printModeHeader("Lighthouse / Start Server")
-			if err := host.Up(context.Background(), host.UpOptions{Listen: cfg.Host.Listen, MCPPath: cfg.Host.MCPPath}); err != nil {
+			if err := host.UpDetached(context.Background(), host.UpOptions{Listen: cfg.Host.Listen, MCPPath: cfg.Host.MCPPath}); err != nil {
 				printModeFeedbackTo("Lighthouse start", err, "Lighthouse menu")
 				continue
 			}
+			if health := host.CheckHealth(); strings.TrimSpace(health.MCPURL) != "" {
+				fmt.Println(statusLine("Lighthouse", "Active endpoint: "+health.MCPURL))
+			}
+			fmt.Println(styleMuted.Render("Server started in background. Use Status for readiness details."))
 			printReturnTo("Lighthouse menu")
 		case lighthouseActionStatus:
 			printModeHeader("Lighthouse / Server Status")

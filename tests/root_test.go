@@ -51,8 +51,8 @@ func TestBuildModeFeedbackSuccess(t *testing.T) {
 	if !strings.Contains(fb.Message, "closed") {
 		t.Fatalf("expected closed message, got %q", fb.Message)
 	}
-	if !strings.Contains(fb.Recovery, "Quit") {
-		t.Fatalf("expected quit recovery hint, got %q", fb.Recovery)
+	if !strings.Contains(fb.Recovery, "Exit") {
+		t.Fatalf("expected exit recovery hint, got %q", fb.Recovery)
 	}
 }
 

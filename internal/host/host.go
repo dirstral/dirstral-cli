@@ -148,6 +148,74 @@ func Up(ctx context.Context, opts UpOptions) error {
 	}
 }
 
+// UpDetached starts dir2mcp as a managed background process and returns immediately.
+func UpDetached(ctx context.Context, opts UpOptions) error {
+	baseCommand, baseArgs, workDir, err := resolveDir2MCPCommand()
+	if err != nil {
+		return err
+	}
+
+	args := append([]string{}, baseArgs...)
+	args = append(args, "up")
+	if opts.Dir != "" {
+		args = append(args, "--dir", opts.Dir)
+	}
+	listen := strings.TrimSpace(opts.Listen)
+	if listen == "" && opts.Port > 0 {
+		listen = fmt.Sprintf("127.0.0.1:%d", opts.Port)
+	}
+	if listen != "" {
+		args = append(args, "--listen", listen)
+	}
+	if opts.MCPPath != "" {
+		args = append(args, "--mcp-path", opts.MCPPath)
+	}
+	if opts.JSON {
+		args = append(args, "--json")
+	}
+
+	effectiveListen := effectiveListen(opts.Listen, opts.Port)
+	effectivePath := normalizeMCPPath(opts.MCPPath)
+	derivedURL, deterministic := ComputeMCPURL(effectiveListen, effectivePath)
+
+	cmd := exec.CommandContext(ctx, baseCommand, args...)
+	if workDir != "" {
+		cmd.Dir = workDir
+	}
+
+	logFile, err := os.OpenFile(filepath.Join(os.TempDir(), "dirstral-lighthouse.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = logFile.Close()
+	}()
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	state := State{
+		PID:       cmd.Process.Pid,
+		StartedAt: time.Now().Format(time.RFC3339),
+		Command:   append([]string{baseCommand}, args...),
+		WorkDir:   workDir,
+		RootDir:   resolveRootDir(opts.Dir, cmd.Dir),
+		MCPURL:    derivedURL,
+	}
+	if err := SaveState(state); err != nil {
+		return err
+	}
+
+	if !deterministic {
+		go captureEndpoint(make(chan struct{}), state.PID, state.RootDir)
+	}
+
+	return nil
+}
+
 func Status() error {
 	health := CheckHealth()
 	if !health.Found {
