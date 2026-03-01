@@ -90,10 +90,9 @@ func (m logModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	var cmd tea.Cmd
-	prevAtBottom := m.viewport.AtBottom()
 	m.viewport, cmd = m.viewport.Update(msg)
 	// Track whether user is at the bottom after any viewport movement.
-	m.wasAtBottom = prevAtBottom
+	m.wasAtBottom = m.viewport.AtBottom()
 	return m, cmd
 }
 

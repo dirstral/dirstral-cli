@@ -148,7 +148,6 @@ func Up(ctx context.Context, opts UpOptions) error {
 	}
 }
 
-// UpDetached starts dir2mcp as a managed background process and returns immediately.
 // LogPath returns the path to the lighthouse log file.
 func LogPath() string {
 	return filepath.Join(os.TempDir(), "dirstral-lighthouse.log")

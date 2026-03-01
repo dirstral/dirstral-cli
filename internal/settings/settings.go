@@ -220,7 +220,11 @@ func (m *model) save() {
 	// Save secrets to .env.local.
 	for _, f := range m.fields {
 		if f.Sensitive && f.Value != "" {
-			if err := config.SaveSecret(f.Key, f.Value); err != nil {
+			envKey := config.EnvVarForField(f.Key)
+			if envKey == "" {
+				envKey = f.Key
+			}
+			if err := config.SaveSecret(envKey, f.Value); err != nil {
 				m.errMsg = fmt.Sprintf("Save secret %s failed: %v", f.Key, err)
 				return
 			}

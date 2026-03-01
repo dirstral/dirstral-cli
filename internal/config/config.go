@@ -224,6 +224,16 @@ var fieldDefs = []fieldDef{
 	{Key: "ELEVENLABS_API_KEY", EnvVar: "ELEVENLABS_API_KEY", Sensitive: true},
 }
 
+// EnvVarForField returns the environment variable mapped to a field key.
+func EnvVarForField(key string) string {
+	for _, fd := range fieldDefs {
+		if fd.Key == key {
+			return fd.EnvVar
+		}
+	}
+	return ""
+}
+
 // fieldValueFromConfig extracts a config field value by key name.
 func fieldValueFromConfig(cfg Config, key string) string {
 	switch key {
@@ -373,6 +383,10 @@ func ValidateField(key, value string) error {
 	case "elevenlabs.voice":
 		if strings.TrimSpace(value) == "" {
 			return errors.New("elevenlabs.voice must not be empty")
+		}
+	case "DIR2MCP_AUTH_TOKEN", "ELEVENLABS_API_KEY":
+		if value != "" && strings.TrimSpace(value) == "" {
+			return fmt.Errorf("%s must not be whitespace-only", key)
 		}
 	}
 	return nil
