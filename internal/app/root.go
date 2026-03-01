@@ -26,10 +26,11 @@ func newRootCommand(cfg config.Config) *cobra.Command {
 		Short: "Terminal-first MCP coding companion",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			for {
-				choice, err := ShowStartScreen()
+				result, err := RunMenu(screenStart)
 				if err != nil {
 					return err
 				}
+				choice := StartChoice(result.Chosen)
 				switch choice {
 				case ChoiceBreeze:
 					printModeHeader("Breeze")
@@ -45,13 +46,10 @@ func newRootCommand(cfg config.Config) *cobra.Command {
 					}
 					printReturnHome()
 				case ChoiceLighthouse:
-					printModeHeader("Lighthouse")
 					if err := runLighthouseMenu(cfg); err != nil {
 						printUIError(err)
 					}
-					printReturnHome()
 				default:
-					clearScreen()
 					fmt.Println("bye")
 					return nil
 				}
@@ -66,7 +64,6 @@ func newRootCommand(cfg config.Config) *cobra.Command {
 }
 
 func printModeHeader(mode string) {
-	clearScreen()
 	fmt.Println(statusLine("Opening", mode))
 	fmt.Println()
 }
@@ -191,11 +188,11 @@ func BuildTempestOptions(cfg config.Config, mcpURL, voice, device string, mute, 
 
 func runLighthouseMenu(cfg config.Config) error {
 	for {
-		choice, err := chooseLighthouseAction()
+		result, err := RunMenu(screenLighthouse)
 		if err != nil {
 			return err
 		}
-		switch choice {
+		switch result.Chosen {
 		case lighthouseActionStart:
 			printModeHeader("Lighthouse / Start Server")
 			if err := host.Up(context.Background(), host.UpOptions{Listen: cfg.Host.Listen, MCPPath: cfg.Host.MCPPath}); err != nil {

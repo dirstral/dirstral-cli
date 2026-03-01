@@ -277,6 +277,35 @@ func terminateProcess(pid int) error {
 	return nil
 }
 
+// HealthInfo describes the current state of a managed dir2mcp process.
+type HealthInfo struct {
+	Found     bool   // true if a state file exists
+	PID       int    // process ID from state file
+	Alive     bool   // true if the process is running
+	MCPURL    string // MCP endpoint URL from state
+	Reachable bool   // true if the MCP endpoint responds
+}
+
+// CheckHealth returns the current health of the managed dir2mcp process.
+func CheckHealth() HealthInfo {
+	state, err := LoadState()
+	if err != nil {
+		return HealthInfo{}
+	}
+	alive := processAlive(state.PID)
+	reachable := false
+	if state.MCPURL != "" {
+		reachable = endpointReachable(state.MCPURL)
+	}
+	return HealthInfo{
+		Found:     true,
+		PID:       state.PID,
+		Alive:     alive,
+		MCPURL:    state.MCPURL,
+		Reachable: reachable,
+	}
+}
+
 func processAlive(pid int) bool {
 	if pid <= 0 {
 		return false
