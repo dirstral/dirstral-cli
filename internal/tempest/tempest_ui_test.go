@@ -39,6 +39,7 @@ func TestTempestUpdateWindowSizeIgnoresRepeatedTinyResize(t *testing.T) {
 }
 
 // TestTempestHelpToggleParityWithCtrlKAndEnterBlockedWhenOpen verifies toggle-key parity and input blocking.
+// This intentionally runs before any WindowSizeMsg to cover pre-initialized model behavior from initialModel.
 func TestTempestHelpToggleParityWithCtrlKAndEnterBlockedWhenOpen(t *testing.T) {
 	m := initialModel(context.Background(), nil, Options{MCPURL: "http://example.com"})
 
