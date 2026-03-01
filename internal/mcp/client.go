@@ -90,6 +90,7 @@ func New(endpoint string, verbose bool) *Client {
 }
 
 func NewWithTransport(endpoint, transport string, verbose bool) *Client {
+	endpoint = strings.TrimSpace(endpoint)
 	transport = strings.TrimSpace(strings.ToLower(transport))
 	if transport == "" {
 		transport = "streamable-http"
@@ -184,6 +185,7 @@ func (c *Client) ListTools(ctx context.Context) ([]Tool, error) {
 		tools = append(tools, Tool{
 			Name:        asString(m["name"]),
 			Description: asString(m["description"]),
+			InputSchema: asMap(m["inputSchema"]),
 		})
 	}
 	return tools, nil
@@ -323,6 +325,13 @@ func (c *Client) call(ctx context.Context, method string, params map[string]any,
 
 	var envelope jsonRPCResponse
 	if err := json.Unmarshal(bodyBytes, &envelope); err != nil {
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			bodyText := strings.TrimSpace(string(bodyBytes))
+			if bodyText == "" {
+				bodyText = http.StatusText(resp.StatusCode)
+			}
+			return nil, resp.StatusCode, resp.Header, fmt.Errorf("http status %d: %s", resp.StatusCode, bodyText)
+		}
 		return nil, resp.StatusCode, resp.Header, err
 	}
 	if envelope.Error != nil {
@@ -469,4 +478,9 @@ func asString(v any) string {
 func asBool(v any) bool {
 	b, _ := v.(bool)
 	return b
+}
+
+func asMap(v any) map[string]any {
+	m, _ := v.(map[string]any)
+	return m
 }
