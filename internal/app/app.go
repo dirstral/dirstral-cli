@@ -120,23 +120,25 @@ func (m *appModel) updateDynamicItems(msg lighthouseStatusMsg) {
 
 	case screenLighthouse:
 		// Show/hide Start/Stop based on current state.
-		var items []MenuItem
 		m.menu.SetIntro(buildLighthouseIntro(msg.Health))
-		if msg.Health.Alive {
-			items = []MenuItem{
-				{Label: lighthouseActionStatus, Description: "Check process and endpoint health", Value: lighthouseActionStatus},
-				{Label: lighthouseActionLogs, Description: "Tail dir2mcp output", Value: lighthouseActionLogs},
-				{Label: lighthouseActionStop, Description: "Terminate managed dir2mcp", Value: lighthouseActionStop},
-				{Label: lighthouseActionBack, Description: "Return to main menu", Value: lighthouseActionBack},
-			}
-		} else {
-			items = []MenuItem{
-				{Label: lighthouseActionStart, Description: "Launch dir2mcp in background", Value: lighthouseActionStart},
-				{Label: lighthouseActionStatus, Description: "Check process and endpoint health", Value: lighthouseActionStatus},
-				{Label: lighthouseActionBack, Description: "Return to main menu", Value: lighthouseActionBack},
-			}
+		m.menu.SetItems(lighthouseItemsForHealth(msg.Health))
+	}
+}
+
+func lighthouseItemsForHealth(health host.HealthInfo) []MenuItem {
+	if health.Alive {
+		return []MenuItem{
+			{Label: lighthouseActionStop, Description: "Terminate managed dir2mcp", Value: lighthouseActionStop},
+			{Label: lighthouseActionStatus, Description: "Check process and endpoint health", Value: lighthouseActionStatus},
+			{Label: lighthouseActionLogs, Description: "Tail dir2mcp output", Value: lighthouseActionLogs},
+			{Label: lighthouseActionBack, Description: "Return to main menu", Value: lighthouseActionBack},
 		}
-		m.menu.SetItems(items)
+	}
+
+	return []MenuItem{
+		{Label: lighthouseActionStart, Description: "Launch dir2mcp in background", Value: lighthouseActionStart},
+		{Label: lighthouseActionStatus, Description: "Check process and endpoint health", Value: lighthouseActionStatus},
+		{Label: lighthouseActionBack, Description: "Return to main menu", Value: lighthouseActionBack},
 	}
 }
 
