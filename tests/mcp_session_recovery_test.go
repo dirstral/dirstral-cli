@@ -1,4 +1,4 @@
-package mcp
+package test
 
 import (
 	"context"
@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+
+	"github.com/alibilge/dirstral-cli/internal/mcp"
 )
 
 func TestCallToolRecoversSessionOnceOnSessionNotFound(t *testing.T) {
@@ -18,15 +20,17 @@ func TestCallToolRecoversSessionOnceOnSessionNotFound(t *testing.T) {
 	toolCalls := 0
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req jsonRPCRequest
+		var req map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
 
+		method, _ := req["method"].(string)
+
 		mu.Lock()
 		defer mu.Unlock()
 
-		switch req.Method {
+		switch method {
 		case "initialize":
 			initializeCalls++
 			session := "session-1"
@@ -34,11 +38,7 @@ func TestCallToolRecoversSessionOnceOnSessionNotFound(t *testing.T) {
 				session = "session-2"
 			}
 			w.Header().Set("MCP-Session-Id", session)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"jsonrpc": "2.0",
-				"id":      req.ID,
-				"result":  map[string]any{},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req["id"], "result": map[string]any{}})
 		case "notifications/initialized":
 			notifyCalls++
 			w.WriteHeader(http.StatusAccepted)
@@ -51,11 +51,8 @@ func TestCallToolRecoversSessionOnceOnSessionNotFound(t *testing.T) {
 				}
 				_ = json.NewEncoder(w).Encode(map[string]any{
 					"jsonrpc": "2.0",
-					"id":      req.ID,
-					"error": map[string]any{
-						"code":    -32001,
-						"message": "SESSION_NOT_FOUND",
-					},
+					"id":      req["id"],
+					"error":   map[string]any{"code": -32001, "message": "SESSION_NOT_FOUND"},
 				})
 				return
 			}
@@ -64,18 +61,16 @@ func TestCallToolRecoversSessionOnceOnSessionNotFound(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"jsonrpc": "2.0",
-				"id":      req.ID,
-				"result": map[string]any{
-					"content": []any{map[string]any{"type": "text", "text": "ok"}},
-				},
+				"id":      req["id"],
+				"result":  map[string]any{"content": []any{map[string]any{"type": "text", "text": "ok"}}},
 			})
 		default:
-			t.Fatalf("unexpected method: %s", req.Method)
+			t.Fatalf("unexpected method: %s", method)
 		}
 	}))
 	defer server.Close()
 
-	client := NewWithTransport(server.URL, "streamable-http", false)
+	client := mcp.NewWithTransport(server.URL, "streamable-http", false)
 	ctx := context.Background()
 
 	if err := client.Initialize(ctx); err != nil {
@@ -111,19 +106,21 @@ func TestCallToolSessionRecoveryIsBoundedToSingleRetry(t *testing.T) {
 	toolCalls := 0
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req jsonRPCRequest
+		var req map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
 
+		method, _ := req["method"].(string)
+
 		mu.Lock()
 		defer mu.Unlock()
 
-		switch req.Method {
+		switch method {
 		case "initialize":
 			initializeCalls++
 			w.Header().Set("MCP-Session-Id", "session")
-			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": map[string]any{}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req["id"], "result": map[string]any{}})
 		case "notifications/initialized":
 			w.WriteHeader(http.StatusAccepted)
 		case "tools/call":
@@ -133,19 +130,16 @@ func TestCallToolSessionRecoveryIsBoundedToSingleRetry(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"jsonrpc": "2.0",
-				"id":      req.ID,
-				"error": map[string]any{
-					"code":    -32001,
-					"message": "session not found",
-				},
+				"id":      req["id"],
+				"error":   map[string]any{"code": -32001, "message": "session not found"},
 			})
 		default:
-			t.Fatalf("unexpected method: %s", req.Method)
+			t.Fatalf("unexpected method: %s", method)
 		}
 	}))
 	defer server.Close()
 
-	client := NewWithTransport(server.URL, "streamable-http", false)
+	client := mcp.NewWithTransport(server.URL, "streamable-http", false)
 	ctx := context.Background()
 
 	if err := client.Initialize(ctx); err != nil {
