@@ -10,7 +10,7 @@ import (
 )
 
 func TestLighthouseMenuItemsOrder(t *testing.T) {
-	want := []string{"Start Server", "Server Status", "Stop Server", "Back"}
+	want := []string{"Start Server", "Server Status", "View Logs", "Stop Server", "Back"}
 	if got := app.LighthouseMenuItems(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected lighthouse options: got %v want %v", got, want)
 	}
