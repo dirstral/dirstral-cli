@@ -10,7 +10,7 @@ import (
 func TestLighthouseItemsForHealthStopped(t *testing.T) {
 	items := lighthouseItemsForHealth(host.HealthInfo{Alive: false})
 	got := itemValues(items)
-	want := []string{lighthouseActionStart, lighthouseActionStatus, lighthouseActionBack}
+	want := []string{lighthouseActionStart, lighthouseActionStatus, lighthouseActionLogs, lighthouseActionBack}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected stopped lighthouse items: got %v want %v", got, want)
 	}

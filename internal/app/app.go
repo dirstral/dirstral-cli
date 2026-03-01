@@ -138,6 +138,7 @@ func lighthouseItemsForHealth(health host.HealthInfo) []MenuItem {
 	return []MenuItem{
 		{Label: lighthouseActionStart, Description: "Launch dir2mcp in background", Value: lighthouseActionStart},
 		{Label: lighthouseActionStatus, Description: "Check process and endpoint health", Value: lighthouseActionStatus},
+		{Label: lighthouseActionLogs, Description: "Tail dir2mcp output", Value: lighthouseActionLogs},
 		{Label: lighthouseActionBack, Description: "Return to main menu", Value: lighthouseActionBack},
 	}
 }

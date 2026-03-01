@@ -8,7 +8,7 @@ func LighthouseMenuConfig() MenuConfig {
 		Items: []MenuItem{
 			{Label: lighthouseActionStart, Description: "Launch dir2mcp in background", Value: lighthouseActionStart},
 			{Label: lighthouseActionStatus, Description: "Check process and endpoint health", Value: lighthouseActionStatus},
-			{Label: lighthouseActionStop, Description: "Terminate managed dir2mcp", Value: lighthouseActionStop},
+			{Label: lighthouseActionLogs, Description: "Tail dir2mcp output", Value: lighthouseActionLogs},
 			{Label: lighthouseActionBack, Description: "Return to main menu", Value: lighthouseActionBack},
 		},
 		ShowLogo: false,

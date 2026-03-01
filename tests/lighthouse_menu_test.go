@@ -16,6 +16,18 @@ func TestLighthouseMenuItemsOrder(t *testing.T) {
 	}
 }
 
+func TestLighthouseMenuConfigIncludesLogsByDefault(t *testing.T) {
+	cfg := app.LighthouseMenuConfig()
+	got := make([]string, 0, len(cfg.Items))
+	for _, item := range cfg.Items {
+		got = append(got, item.Value)
+	}
+	want := []string{"Start Server", "Server Status", "View Logs", "Back"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected lighthouse menu config items: got %v want %v", got, want)
+	}
+}
+
 func TestLighthouseMenuControlsAreKeyboardFirst(t *testing.T) {
 	cfg := app.LighthouseMenuConfig()
 	if !strings.Contains(cfg.Controls, "j/k") {
