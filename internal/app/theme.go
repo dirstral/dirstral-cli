@@ -18,12 +18,12 @@ const (
 	colorError       = "\033[38;5;203m"
 	colorBold        = "\033[1m"
 
-	colorTint1 = "\033[38;5;226m"
-	colorTint2 = "\033[38;5;220m"
-	colorTint3 = "\033[38;5;214m"
-	colorTint4 = "\033[38;5;208m"
-	colorTint5 = "\033[38;5;202m"
-	colorTint6 = "\033[38;5;196m"
+	colorTint1 = "\033[38;5;220m"
+	colorTint2 = "\033[38;5;214m"
+	colorTint3 = "\033[38;5;208m"
+	colorTint4 = "\033[38;5;202m"
+	colorTint5 = "\033[38;5;196m"
+	colorTint6 = "\033[38;5;166m"
 )
 
 // Lipgloss color palette.
