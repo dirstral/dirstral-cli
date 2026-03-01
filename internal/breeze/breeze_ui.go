@@ -294,17 +294,6 @@ func (m *breezeModel) checkApprovalAndRunPlan(plan TurnPlan) tea.Msg {
 	return mcpResponseMsg{output: execRes.Output}
 }
 
-func (m *breezeModel) checkApprovalAndRun(tool string, args map[string]any) tea.Msg {
-	if needsApproval(tool) {
-		return approvalReqMsg{tool: tool, args: args}
-	}
-	execRes, err := ExecuteParsed(m.ctx, m.client, ParsedInput{Tool: tool, Args: args})
-	if err != nil {
-		return mcpResponseMsg{err: err}
-	}
-	return mcpResponseMsg{output: execRes.Output}
-}
-
 func (m *breezeModel) runToolCmd(tool string, args map[string]any) tea.Cmd {
 	return func() tea.Msg {
 		execRes, err := ExecuteParsed(m.ctx, m.client, ParsedInput{Tool: tool, Args: args})

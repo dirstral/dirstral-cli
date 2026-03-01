@@ -274,16 +274,3 @@ func connectedBanner(url, transport, session, model string) []string {
 	msgs = append(msgs, ui.Dim("Type /help for commands, /quit to exit."))
 	return msgs
 }
-
-func parseForJSON(input, model string) (ParsedInput, error) {
-	plan, err := PlanTurn(input, model)
-	if err != nil {
-		return ParsedInput{}, err
-	}
-	parsed := ParsedInput{Quit: plan.Quit, Help: plan.Help, Clear: plan.Clear}
-	if len(plan.Steps) > 0 {
-		parsed.Tool = plan.Steps[0].Tool
-		parsed.Args = plan.Steps[0].Args
-	}
-	return parsed, nil
-}
