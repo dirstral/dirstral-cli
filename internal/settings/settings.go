@@ -318,7 +318,7 @@ func (m model) View() string {
 
 		src := sourceStyle.Render(fmt.Sprintf("(%s)", f.Source))
 
-		b.WriteString(fmt.Sprintf("%s%-25s %s %s\n", cursor, keyStr, displayVal, src))
+		_, _ = fmt.Fprintf(&b, "%s%-25s %s %s\n", cursor, keyStr, displayVal, src)
 	}
 
 	// Scroll indicator.
@@ -331,7 +331,7 @@ func (m model) View() string {
 	// State-specific footer.
 	switch m.state {
 	case stateEditing:
-		b.WriteString(fmt.Sprintf("  Editing %s:\n", ui.Brand.Render(m.fields[m.cursor].Key)))
+		_, _ = fmt.Fprintf(&b, "  Editing %s:\n", ui.Brand.Render(m.fields[m.cursor].Key))
 		b.WriteString("  " + m.input.View() + "\n")
 		if m.errMsg != "" {
 			b.WriteString("  " + ui.Red.Render(m.errMsg) + "\n")
