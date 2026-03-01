@@ -82,23 +82,20 @@ func TestStatusIncludesConnectionContractDetails(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, ".dir2mcp"), 0o755); err != nil {
 		t.Fatalf("mkdir .dir2mcp: %v", err)
 	}
-	connection := `{
-		"url": "` + server.URL + `",
-		"headers": {
+	writeConnectionFixture(t, root, map[string]any{
+		"url": server.URL,
+		"headers": map[string]any{
 			"MCP-Protocol-Version": "2025-11-25",
-			"Authorization": "Bearer <token-from-secret.token>"
+			"Authorization":        "Bearer <token-from-secret.token>",
 		},
-		"session": {
-			"uses_mcp_session_id": true,
-			"header_name": "MCP-Session-Id",
-			"assigned_on_initialize": true
+		"session": map[string]any{
+			"uses_mcp_session_id":    true,
+			"header_name":            "MCP-Session-Id",
+			"assigned_on_initialize": true,
 		},
 		"token_source": "secret.token",
-		"token_file": "` + filepath.Join(root, ".dir2mcp", "secret.token") + `"
-	}`
-	if err := os.WriteFile(filepath.Join(root, ".dir2mcp", "connection.json"), []byte(connection), 0o644); err != nil {
-		t.Fatalf("write connection.json: %v", err)
-	}
+		"token_file":   filepath.Join(root, ".dir2mcp", "secret.token"),
+	})
 
 	s := host.State{PID: os.Getpid(), StartedAt: "now", MCPURL: server.URL, RootDir: root}
 	if err := host.SaveState(s); err != nil {
@@ -170,20 +167,17 @@ func TestStatusDerivesAuthSourceFromTokenFileIndicator(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, ".dir2mcp"), 0o755); err != nil {
 		t.Fatalf("mkdir .dir2mcp: %v", err)
 	}
-	connection := `{
-		"url": "` + server.URL + `",
-		"headers": {
-			"MCP-Protocol-Version": "2025-11-25"
+	writeConnectionFixture(t, root, map[string]any{
+		"url": server.URL,
+		"headers": map[string]any{
+			"MCP-Protocol-Version": "2025-11-25",
 		},
-		"session": {
+		"session": map[string]any{
 			"uses_mcp_session_id": false,
-			"header_name": "MCP-Session-Id"
+			"header_name":         "MCP-Session-Id",
 		},
-		"token_file": "` + filepath.Join(root, ".dir2mcp", "secret.token") + `"
-	}`
-	if err := os.WriteFile(filepath.Join(root, ".dir2mcp", "connection.json"), []byte(connection), 0o644); err != nil {
-		t.Fatalf("write connection.json: %v", err)
-	}
+		"token_file": filepath.Join(root, ".dir2mcp", "secret.token"),
+	})
 
 	s := host.State{PID: os.Getpid(), StartedAt: "now", MCPURL: server.URL, RootDir: root}
 	if err := host.SaveState(s); err != nil {
@@ -215,15 +209,35 @@ func captureStdout(fn func() error) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	defer func() {
+		os.Stdout = old
+	}()
+	defer func() {
+		_ = r.Close()
+	}()
+	defer func() {
+		_ = w.Close()
+	}()
 	os.Stdout = w
 	fnErr := fn()
 	_ = w.Close()
-	os.Stdout = old
 
 	var buf bytes.Buffer
 	_, _ = io.Copy(&buf, r)
-	_ = r.Close()
 	return buf.String(), fnErr
+}
+
+func writeConnectionFixture(t *testing.T, root string, payload map[string]any) {
+	t.Helper()
+
+	connectionJSON, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal connection payload: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(root, ".dir2mcp", "connection.json"), connectionJSON, 0o644); err != nil {
+		t.Fatalf("write connection.json: %v", err)
+	}
 }
 
 func stripANSI(value string) string {

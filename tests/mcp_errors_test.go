@@ -18,6 +18,8 @@ func TestCanonicalCodeFromError(t *testing.T) {
 	}{
 		{name: "equivalent phrase in message", err: errors.New("backend failure: session not found"), want: mcp.CanonicalCodeSessionNotFound},
 		{name: "unauthorized alias", err: errors.New("request failed: unauthenticated"), want: mcp.CanonicalCodeUnauthorized},
+		{name: "permission variant", err: errors.New("permission denied for this route"), want: mcp.CanonicalCodePermissionDenied},
+		{name: "rate limit variant", err: errors.New("rate-limit exceeded; retry later"), want: mcp.CanonicalCodeRateLimited},
 		{name: "unknown", err: errors.New("something else"), want: ""},
 	}
 

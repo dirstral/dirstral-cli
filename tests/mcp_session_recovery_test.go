@@ -3,6 +3,7 @@ package test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -11,6 +12,22 @@ import (
 	"github.com/alibilge/dirstral-cli/internal/mcp"
 )
 
+func reportHandlerErr(ch chan error, format string, args ...any) {
+	select {
+	case ch <- fmt.Errorf(format, args...):
+	default:
+	}
+}
+
+func assertNoHandlerErr(t *testing.T, ch chan error) {
+	t.Helper()
+	select {
+	case err := <-ch:
+		t.Fatalf("handler assertion failed: %v", err)
+	default:
+	}
+}
+
 func TestCallToolRecoversSessionOnceOnSessionNotFound(t *testing.T) {
 	t.Parallel()
 
@@ -18,11 +35,14 @@ func TestCallToolRecoversSessionOnceOnSessionNotFound(t *testing.T) {
 	initializeCalls := 0
 	notifyCalls := 0
 	toolCalls := 0
+	handlerErrCh := make(chan error, 1)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode request: %v", err)
+			reportHandlerErr(handlerErrCh, "decode request: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
 		}
 
 		method, _ := req["method"].(string)
@@ -47,7 +67,9 @@ func TestCallToolRecoversSessionOnceOnSessionNotFound(t *testing.T) {
 			sessionHeader := r.Header.Get("MCP-Session-Id")
 			if toolCalls == 1 {
 				if sessionHeader != "session-1" {
-					t.Fatalf("expected first tool call with session-1, got %q", sessionHeader)
+					reportHandlerErr(handlerErrCh, "expected first tool call with session-1, got %q", sessionHeader)
+					w.WriteHeader(http.StatusBadRequest)
+					return
 				}
 				_ = json.NewEncoder(w).Encode(map[string]any{
 					"jsonrpc": "2.0",
@@ -57,7 +79,9 @@ func TestCallToolRecoversSessionOnceOnSessionNotFound(t *testing.T) {
 				return
 			}
 			if sessionHeader != "session-2" {
-				t.Fatalf("expected retried tool call with session-2, got %q", sessionHeader)
+				reportHandlerErr(handlerErrCh, "expected retried tool call with session-2, got %q", sessionHeader)
+				w.WriteHeader(http.StatusBadRequest)
+				return
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"jsonrpc": "2.0",
@@ -65,7 +89,9 @@ func TestCallToolRecoversSessionOnceOnSessionNotFound(t *testing.T) {
 				"result":  map[string]any{"content": []any{map[string]any{"type": "text", "text": "ok"}}},
 			})
 		default:
-			t.Fatalf("unexpected method: %s", method)
+			reportHandlerErr(handlerErrCh, "unexpected method: %s", method)
+			w.WriteHeader(http.StatusBadRequest)
+			return
 		}
 	}))
 	defer server.Close()
@@ -96,6 +122,7 @@ func TestCallToolRecoversSessionOnceOnSessionNotFound(t *testing.T) {
 	if toolCalls != 2 {
 		t.Fatalf("expected 2 tools/call attempts, got %d", toolCalls)
 	}
+	assertNoHandlerErr(t, handlerErrCh)
 }
 
 func TestCallToolSessionRecoveryIsBoundedToSingleRetry(t *testing.T) {
@@ -104,11 +131,14 @@ func TestCallToolSessionRecoveryIsBoundedToSingleRetry(t *testing.T) {
 	var mu sync.Mutex
 	initializeCalls := 0
 	toolCalls := 0
+	handlerErrCh := make(chan error, 1)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode request: %v", err)
+			reportHandlerErr(handlerErrCh, "decode request: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
 		}
 
 		method, _ := req["method"].(string)
@@ -126,7 +156,9 @@ func TestCallToolSessionRecoveryIsBoundedToSingleRetry(t *testing.T) {
 		case "tools/call":
 			toolCalls++
 			if toolCalls > 2 {
-				t.Fatalf("unexpected extra retry, tools/call=%d", toolCalls)
+				reportHandlerErr(handlerErrCh, "unexpected extra retry, tools/call=%d", toolCalls)
+				w.WriteHeader(http.StatusBadRequest)
+				return
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"jsonrpc": "2.0",
@@ -134,7 +166,9 @@ func TestCallToolSessionRecoveryIsBoundedToSingleRetry(t *testing.T) {
 				"error":   map[string]any{"code": -32001, "message": "session not found"},
 			})
 		default:
-			t.Fatalf("unexpected method: %s", method)
+			reportHandlerErr(handlerErrCh, "unexpected method: %s", method)
+			w.WriteHeader(http.StatusBadRequest)
+			return
 		}
 	}))
 	defer server.Close()
@@ -159,4 +193,5 @@ func TestCallToolSessionRecoveryIsBoundedToSingleRetry(t *testing.T) {
 	if toolCalls != 2 {
 		t.Fatalf("expected exactly 2 tools/call attempts, got %d", toolCalls)
 	}
+	assertNoHandlerErr(t, handlerErrCh)
 }

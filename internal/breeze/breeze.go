@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/alibilge/dirstral-cli/internal/mcp"
 	tea "github.com/charmbracelet/bubbletea"
@@ -216,7 +217,9 @@ func asString(v any) string {
 }
 
 func startupStatsHint(ctx context.Context, client *mcp.Client) string {
-	res, err := client.CallTool(ctx, "dir2mcp.stats", map[string]any{})
+	statsCtx, cancel := context.WithTimeout(ctx, 1200*time.Millisecond)
+	defer cancel()
+	res, err := client.CallTool(statsCtx, "dir2mcp.stats", map[string]any{})
 	if err != nil {
 		return ""
 	}

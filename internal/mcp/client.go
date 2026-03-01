@@ -197,10 +197,22 @@ func (c *Client) CallTool(ctx context.Context, name string, args map[string]any)
 	start := time.Now()
 	body, status, headers, err := c.call(ctx, "tools/call", params, true)
 	if err != nil && c.transport == "streamable-http" && isSessionNotFoundError(err) {
+		if c.verbose {
+			fmt.Println("[mcp] SESSION_NOT_FOUND received; recovering session and retrying tools/call once")
+		}
 		if recoverErr := c.recoverStreamableHTTPSession(ctx); recoverErr != nil {
+			if c.verbose {
+				fmt.Printf("[mcp] session recovery failed: %v\n", recoverErr)
+			}
 			return nil, fmt.Errorf("session recovery failed: %w", recoverErr)
 		}
+		if c.verbose {
+			fmt.Println("[mcp] session recovery succeeded; retrying tools/call")
+		}
 		body, status, headers, err = c.call(ctx, "tools/call", params, true)
+		if err != nil && c.verbose {
+			fmt.Printf("[mcp] tools/call retry failed: %v\n", err)
+		}
 	}
 	if err != nil {
 		return nil, err
@@ -236,6 +248,9 @@ func (c *Client) CallTool(ctx context.Context, name string, args map[string]any)
 }
 
 func (c *Client) recoverStreamableHTTPSession(ctx context.Context) error {
+	if c.verbose {
+		fmt.Println("[mcp] recovering streamable-http MCP session")
+	}
 	previousSessionID := c.sessionID
 	c.sessionID = ""
 	if err := c.Initialize(ctx); err != nil {

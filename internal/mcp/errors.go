@@ -70,12 +70,38 @@ func canonicalCodeFromText(text string) string {
 	if strings.Contains(upper, CanonicalCodeFileNotFound) || strings.Contains(upper, "FILE NOT FOUND") {
 		return CanonicalCodeFileNotFound
 	}
-	if strings.Contains(upper, CanonicalCodePermissionDenied) || strings.Contains(upper, "FORBIDDEN") {
+	if containsAny(upper,
+		CanonicalCodePermissionDenied,
+		"PERMISSION DENIED",
+		"PERMISSION",
+		"DENIED",
+		"FORBIDDEN",
+	) {
 		return CanonicalCodePermissionDenied
 	}
-	if strings.Contains(upper, CanonicalCodeRateLimited) || strings.Contains(upper, "TOO MANY REQUESTS") {
+	if containsAny(upper,
+		CanonicalCodeRateLimited,
+		"RATE LIMIT",
+		"RATE-LIMIT",
+		"RATE_LIMIT",
+		"RATE LIMIT EXCEEDED",
+		"LIMIT EXCEEDED",
+		"QUOTA",
+		"THROTTLE",
+		"THROTTLED",
+		"TOO MANY REQUESTS",
+	) {
 		return CanonicalCodeRateLimited
 	}
 
 	return ""
+}
+
+func containsAny(value string, patterns ...string) bool {
+	for _, pattern := range patterns {
+		if strings.Contains(value, pattern) {
+			return true
+		}
+	}
+	return false
 }
