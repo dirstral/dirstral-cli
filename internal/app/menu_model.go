@@ -174,25 +174,13 @@ func (m MenuModel) View() string {
 	var headerItems []string
 	if m.config.Title != "" {
 		title := styleTitle.MaxWidth(contentWidth).Render(m.config.Title)
-		if showLogo {
-			headerItems = append(headerItems, title)
-		} else {
-			headerItems = append(headerItems, lipgloss.PlaceHorizontal(panelWidth, lipgloss.Center, title))
-		}
+		headerItems = append(headerItems, lipgloss.PlaceHorizontal(panelWidth, lipgloss.Center, title))
 	}
 	for _, line := range m.config.Intro {
 		intro := styleMuted.MaxWidth(contentWidth).Render(line)
-		if showLogo {
-			headerItems = append(headerItems, intro)
-		} else {
-			headerItems = append(headerItems, lipgloss.PlaceHorizontal(panelWidth, lipgloss.Center, intro))
-		}
+		headerItems = append(headerItems, lipgloss.PlaceHorizontal(panelWidth, lipgloss.Center, intro))
 	}
-	headerAlign := lipgloss.Center
-	if showLogo {
-		headerAlign = lipgloss.Left
-	}
-	header := joinVerticalNonEmpty(headerAlign, headerItems...)
+	header := joinVerticalNonEmpty(lipgloss.Center, headerItems...)
 
 	var menuLines []string
 	labelWidth := clampInt(contentWidth/3, 8, 28)
