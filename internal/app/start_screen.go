@@ -1,12 +1,37 @@
 package app
 
+var startupTips = []string{
+	"Tip: Lighthouse first is the fastest demo path.",
+	"Tip: Press q any time to return or quit.",
+	"Tip: Use j/k if arrow keys are awkward in your terminal.",
+	"Tip: Breeze is best for quick tool-driven lookups.",
+}
+
+// StartupTips returns startup hints shown on the home screen.
+func StartupTips() []string {
+	out := make([]string, len(startupTips))
+	copy(out, startupTips)
+	return out
+}
+
+// StartupTip returns the tip for a specific index.
+func StartupTip(index int) string {
+	if len(startupTips) == 0 {
+		return ""
+	}
+	if index < 0 {
+		index = 0
+	}
+	return startupTips[index%len(startupTips)]
+}
+
 // StartMenuConfig returns the menu configuration for the start screen.
 func StartMenuConfig() MenuConfig {
 	return MenuConfig{
-		Title: "Welcome to dirstral",
+		Title: "Welcome to Dirstral",
 		Intro: []string{
 			"Launch mode: Breeze (chat), Tempest (voice), Lighthouse (host MCP)",
-			"Tip: Lighthouse first is the fastest demo path.",
+			StartupTip(0),
 		},
 		Items: []MenuItem{
 			{Label: string(ChoiceBreeze), Description: "Interactive text chat with MCP tools", Value: string(ChoiceBreeze)},
@@ -15,6 +40,6 @@ func StartMenuConfig() MenuConfig {
 			{Label: string(ChoiceQuit), Description: "Exit dirstral", Value: string(ChoiceQuit)},
 		},
 		ShowLogo: true,
-		Controls: "arrows navigate · enter select · q/esc quit",
+		Controls: "up/down or j/k move · enter select · esc/q quit",
 	}
 }

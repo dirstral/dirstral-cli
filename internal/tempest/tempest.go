@@ -21,12 +21,14 @@ import (
 )
 
 type Options struct {
-	MCPURL  string
-	Voice   string
-	Device  string
-	Mute    bool
-	Verbose bool
-	BaseURL string
+	MCPURL    string
+	Transport string
+	Model     string
+	Voice     string
+	Device    string
+	Mute      bool
+	Verbose   bool
+	BaseURL   string
 }
 
 func Run(ctx context.Context, opts Options) error {
@@ -34,7 +36,17 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 
-	client := mcp.New(opts.MCPURL, opts.Verbose)
+	if strings.TrimSpace(opts.Transport) == "" {
+		opts.Transport = "streamable-http"
+	}
+	if strings.TrimSpace(opts.Model) == "" {
+		opts.Model = "mistral-small-latest"
+	}
+
+	client := mcp.NewWithTransport(opts.MCPURL, opts.Transport, opts.Verbose)
+	defer func() {
+		_ = client.Close()
+	}()
 	if err := client.Initialize(ctx); err != nil {
 		return err
 	}
@@ -44,18 +56,6 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 	return nil
-}
-
-func extractAnswer(res *mcp.ToolCallResult) string {
-	if answer, ok := res.StructuredContent["answer"].(string); ok && strings.TrimSpace(answer) != "" {
-		return answer
-	}
-	for _, c := range res.Content {
-		if strings.TrimSpace(c.Text) != "" {
-			return c.Text
-		}
-	}
-	return ""
 }
 
 func recordAudio(ctx context.Context, device string) (string, error) {

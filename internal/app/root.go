@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/alibilge/dirstral-cli/internal/breeze"
@@ -34,17 +35,11 @@ func newRootCommand(cfg config.Config) *cobra.Command {
 				switch choice {
 				case ChoiceBreeze:
 					printModeHeader("Breeze")
-					if err := runBreeze(cmd.Context(), cfg); err != nil {
-						printUIError(err)
-					}
-					printReturnHome()
+					printModeFeedback("Breeze", runBreeze(cmd.Context(), cfg))
 				case ChoiceTempest:
 					printModeHeader("Tempest")
 					opts := BuildTempestOptions(cfg, cfg.MCP.URL, cfg.ElevenLabs.Voice, "", false, cfg.Verbose, cfg.ElevenLabs.BaseURL)
-					if err := tempest.Run(cmd.Context(), opts); err != nil {
-						printUIError(err)
-					}
-					printReturnHome()
+					printModeFeedback("Tempest", tempest.Run(cmd.Context(), opts))
 				case ChoiceLighthouse:
 					if err := runLighthouseMenu(cfg); err != nil {
 						printUIError(err)
@@ -68,17 +63,60 @@ func printModeHeader(mode string) {
 	fmt.Println()
 }
 
-func printReturnHome() {
+func printReturnTo(label string) {
 	fmt.Println()
-	fmt.Println(statusLine("Transition", "Returning to home"))
+	fmt.Println(statusLine("Transition", "Returning to "+label))
 }
 
 func printUIError(err error) {
 	fmt.Println(errorLine(err))
 }
 
+// ModeFeedback is rendered after a mode exits to keep transitions predictable.
+type ModeFeedback struct {
+	Message  string
+	Recovery string
+	IsError  bool
+}
+
+// BuildModeFeedback classifies a mode result for friendly transition output.
+func BuildModeFeedback(mode string, err error) ModeFeedback {
+	if err == nil {
+		return ModeFeedback{
+			Message:  fmt.Sprintf("%s closed", mode),
+			Recovery: fmt.Sprintf("Select %s again to continue, or choose Quit to exit dirstral.", mode),
+		}
+	}
+	if errors.Is(err, context.Canceled) {
+		return ModeFeedback{
+			Message:  fmt.Sprintf("%s canceled", mode),
+			Recovery: fmt.Sprintf("Select %s again to retry, or choose another mode.", mode),
+		}
+	}
+	return ModeFeedback{
+		Message:  fmt.Sprintf("%s failed: %v", mode, err),
+		Recovery: fmt.Sprintf("Select %s to retry after fixing config/network, or choose another mode.", mode),
+		IsError:  true,
+	}
+}
+
+func printModeFeedback(mode string, err error) {
+	printModeFeedbackTo(mode, err, "home")
+}
+
+func printModeFeedbackTo(mode string, err error, destination string) {
+	feedback := BuildModeFeedback(mode, err)
+	if feedback.IsError {
+		printUIError(errors.New(feedback.Message))
+	} else {
+		fmt.Println(statusLine("Transition", feedback.Message))
+	}
+	fmt.Println(styleMuted.Render(feedback.Recovery))
+	printReturnTo(destination)
+}
+
 func newBreezeCommand(cfg config.Config) *cobra.Command {
-	options := breeze.Options{MCPURL: cfg.MCP.URL, Transport: cfg.MCP.Transport, Model: cfg.Model, Verbose: cfg.Verbose}
+	options := breeze.Options{MCPURL: cfg.MCP.URL, Transport: cfg.MCP.Transport, Model: cfg.Model, Verbose: cfg.Verbose, JSON: false}
 	cmd := &cobra.Command{
 		Use:   "breeze",
 		Short: "Start text-to-text mode",
@@ -86,10 +124,11 @@ func newBreezeCommand(cfg config.Config) *cobra.Command {
 			return breeze.Run(cmd.Context(), options)
 		},
 	}
-	cmd.Flags().StringVar(&options.MCPURL, "mcp", options.MCPURL, "MCP server URL")
+	cmd.Flags().StringVar(&options.MCPURL, "mcp", options.MCPURL, "MCP server URL (streamable-http) or stdio command")
 	cmd.Flags().StringVar(&options.Transport, "transport", options.Transport, "MCP transport (streamable-http|stdio)")
 	cmd.Flags().StringVar(&options.Model, "model", options.Model, "Model name")
 	cmd.Flags().BoolVar(&options.Verbose, "verbose", options.Verbose, "Verbose MCP logging")
+	cmd.Flags().BoolVar(&options.JSON, "json", options.JSON, "Output NDJSON events instead of TUI")
 	return cmd
 }
 
@@ -177,12 +216,14 @@ func BuildTempestOptions(cfg config.Config, mcpURL, voice, device string, mute, 
 		baseURL = cfg.ElevenLabs.BaseURL
 	}
 	return tempest.Options{
-		MCPURL:  mcpURL,
-		Voice:   voice,
-		Device:  device,
-		Mute:    mute,
-		Verbose: verbose,
-		BaseURL: baseURL,
+		MCPURL:    mcpURL,
+		Transport: cfg.MCP.Transport,
+		Model:     cfg.Model,
+		Voice:     voice,
+		Device:    device,
+		Mute:      mute,
+		Verbose:   verbose,
+		BaseURL:   baseURL,
 	}
 }
 
@@ -196,21 +237,24 @@ func runLighthouseMenu(cfg config.Config) error {
 		case lighthouseActionStart:
 			printModeHeader("Lighthouse / Start Server")
 			if err := host.Up(context.Background(), host.UpOptions{Listen: cfg.Host.Listen, MCPPath: cfg.Host.MCPPath}); err != nil {
-				printUIError(err)
+				printModeFeedbackTo("Lighthouse start", err, "Lighthouse menu")
+				continue
 			}
-			printReturnHome()
+			printReturnTo("Lighthouse menu")
 		case lighthouseActionStatus:
 			printModeHeader("Lighthouse / Server Status")
 			if err := host.Status(); err != nil {
-				printUIError(err)
+				printModeFeedbackTo("Lighthouse status", err, "Lighthouse menu")
+				continue
 			}
-			printReturnHome()
+			printReturnTo("Lighthouse menu")
 		case lighthouseActionStop:
 			printModeHeader("Lighthouse / Stop Server")
 			if err := host.Down(); err != nil {
-				printUIError(err)
+				printModeFeedbackTo("Lighthouse stop", err, "Lighthouse menu")
+				continue
 			}
-			printReturnHome()
+			printReturnTo("Lighthouse menu")
 		default:
 			return nil
 		}

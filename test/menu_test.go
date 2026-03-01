@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/alibilge/dirstral-cli/internal/app"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestStartMenuItemsOrder(t *testing.T) {
@@ -70,5 +71,40 @@ func TestNormalizeLeftSpacingRemovesSharedIndent(t *testing.T) {
 	want := []string{"alpha", "  beta", "gamma"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected normalization: got %v want %v", got, want)
+	}
+}
+
+func TestStartupTipRotationWraps(t *testing.T) {
+	tips := app.StartupTips()
+	if len(tips) < 2 {
+		t.Fatalf("need at least two startup tips")
+	}
+	if got := app.StartupTip(len(tips)); got != tips[0] {
+		t.Fatalf("expected wraparound tip %q, got %q", tips[0], got)
+	}
+}
+
+func TestStartMenuControlsAreKeyboardFirst(t *testing.T) {
+	cfg := app.StartMenuConfig()
+	if !strings.Contains(cfg.Controls, "j/k") {
+		t.Fatalf("expected j/k controls, got %q", cfg.Controls)
+	}
+	if !strings.Contains(cfg.Controls, "esc/q") {
+		t.Fatalf("expected esc/q controls, got %q", cfg.Controls)
+	}
+}
+
+func TestEnterWorksEvenDuringReveal(t *testing.T) {
+	t.Setenv("TERM", "xterm-256color")
+	t.Setenv("NO_COLOR", "")
+
+	m := app.NewMenuModel(app.MenuConfig{
+		Items: []app.MenuItem{{Label: "One", Value: "one"}, {Label: "Two", Value: "two"}},
+	})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	after := updated.(app.MenuModel)
+	if after.Chosen() != "one" {
+		t.Fatalf("expected enter to select first item during reveal, got %q", after.Chosen())
 	}
 }

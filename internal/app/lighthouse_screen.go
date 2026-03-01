@@ -12,6 +12,6 @@ func LighthouseMenuConfig() MenuConfig {
 			{Label: lighthouseActionBack, Description: "Return to main menu", Value: lighthouseActionBack},
 		},
 		ShowLogo: false,
-		Controls: "arrows navigate · enter select · q/esc back",
+		Controls: "up/down or j/k move · enter select · esc/q back",
 	}
 }

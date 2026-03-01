@@ -2,9 +2,11 @@ package tempest
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 
+	"github.com/alibilge/dirstral-cli/internal/breeze"
 	"github.com/alibilge/dirstral-cli/internal/mcp"
 	"github.com/alibilge/dirstral-cli/internal/ui"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -220,13 +222,20 @@ func (m *tempestModel) transcribeCmd(path string) tea.Cmd {
 
 func (m *tempestModel) thinkCmd(question string) tea.Cmd {
 	return func() tea.Msg {
-		res, err := m.client.CallTool(m.ctx, "dir2mcp.ask", map[string]any{"question": question, "k": 8})
+		parsed := breeze.ParseInput(question, m.opts.Model)
+		if breeze.RequiresApproval(parsed.Tool) {
+			return thinkDoneMsg{err: mcpErrApprovalRequired(parsed.Tool)}
+		}
+		execRes, err := breeze.ExecuteParsed(m.ctx, m.client, parsed)
 		if err != nil {
 			return thinkDoneMsg{err: err}
 		}
-		answer := extractAnswer(res)
-		return thinkDoneMsg{answer: answer}
+		return thinkDoneMsg{answer: strings.TrimSpace(execRes.Output)}
 	}
+}
+
+func mcpErrApprovalRequired(tool string) error {
+	return fmt.Errorf("tempest requires manual confirmation for tool %s; use breeze for interactive approval", tool)
 }
 
 func (m *tempestModel) speakCmd(text string) tea.Cmd {

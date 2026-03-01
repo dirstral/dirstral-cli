@@ -3,7 +3,6 @@ package breeze
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/alibilge/dirstral-cli/internal/mcp"
@@ -23,6 +22,7 @@ type mcpResponseMsg struct {
 type breezeModel struct {
 	client    *mcp.Client
 	ctx       context.Context
+	modelName string
 	viewport  viewport.Model
 	textInput textinput.Model
 	spinner   spinner.Model
@@ -38,7 +38,7 @@ type breezeModel struct {
 	confirmArgs    map[string]any
 }
 
-func initialModel(ctx context.Context, client *mcp.Client, url string, session string) breezeModel {
+func initialModel(ctx context.Context, client *mcp.Client, opts Options) breezeModel {
 	ti := textinput.New()
 	ti.Placeholder = "Ask a question or type /help..."
 	ti.Focus()
@@ -49,15 +49,12 @@ func initialModel(ctx context.Context, client *mcp.Client, url string, session s
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(ui.ClrBrand)
 
-	msgs := []string{
-		ui.Info("Connected to", url),
-		ui.Info("Session:", session),
-		ui.Dim("Type /help for commands, /quit to exit."),
-	}
+	msgs := connectedBanner(opts.MCPURL, opts.Transport, client.SessionID(), opts.Model)
 
 	return breezeModel{
 		client:    client,
 		ctx:       ctx,
+		modelName: opts.Model,
 		textInput: ti,
 		spinner:   s,
 		messages:  msgs,
@@ -163,6 +160,15 @@ func (m breezeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport.SetContent(strings.Join(m.messages, "\n\n"))
 		m.viewport.GotoBottom()
 		return m, nil
+
+	case approvalReqMsg:
+		m.isLoading = false
+		m.confirmingTool = msg.tool
+		m.confirmArgs = msg.args
+		m.messages = append(m.messages, ui.Yellow.Render("Approval required for ")+ui.Brand.Render(msg.tool))
+		m.viewport.SetContent(strings.Join(m.messages, "\n\n"))
+		m.viewport.GotoBottom()
+		return m, nil
 	}
 
 	m.viewport, vpCmd = m.viewport.Update(msg)
@@ -197,55 +203,38 @@ func (m breezeModel) View() string {
 
 func (m *breezeModel) processInputCmd(input string) tea.Cmd {
 	return func() tea.Msg {
-		switch {
-		case strings.HasPrefix(input, "/list"):
-			prefix := strings.TrimSpace(strings.TrimPrefix(input, "/list"))
-			return m.checkApprovalAndRun("dir2mcp.list_files", map[string]any{"path_prefix": prefix, "limit": 30})
-		case strings.HasPrefix(input, "/search "):
-			query := strings.TrimSpace(strings.TrimPrefix(input, "/search"))
-			return m.checkApprovalAndRun("dir2mcp.search", map[string]any{"query": query, "k": 8})
-		case strings.HasPrefix(input, "/open "):
-			args := strings.Fields(strings.TrimPrefix(input, "/open"))
-			if len(args) == 0 {
-				return mcpResponseMsg{output: ui.Dim("usage: /open <rel_path>")}
-			}
-			return m.checkApprovalAndRun("dir2mcp.open_file", map[string]any{"rel_path": args[0]})
-		default:
-			return m.checkApprovalAndRun("dir2mcp.ask", map[string]any{"question": input, "k": 8})
+		parsed, err := parseForJSON(input, m.modelName)
+		if err != nil {
+			return mcpResponseMsg{err: err}
 		}
+		if parsed.Help {
+			return mcpResponseMsg{output: formatHelp()}
+		}
+		if parsed.Tool == "" {
+			return mcpResponseMsg{}
+		}
+		return m.checkApprovalAndRun(parsed.Tool, parsed.Args)
 	}
 }
 
 func (m *breezeModel) checkApprovalAndRun(tool string, args map[string]any) tea.Msg {
-	if !autoApprove[tool] {
-		// Needs approval, we handle this by mutating state directly isn't safe from Cmd,
-		// but since this is called from a tea.Cmd, we actually want to return a message that triggers approval.
-		// Wait, instead of mutating, we can return a specific Msg to trigger the approval prompt.
-		// Let's create an approvalReqMsg
+	if needsApproval(tool) {
 		return approvalReqMsg{tool: tool, args: args}
 	}
-	res, err := m.client.CallTool(m.ctx, tool, args)
+	execRes, err := ExecuteParsed(m.ctx, m.client, ParsedInput{Tool: tool, Args: args})
 	if err != nil {
 		return mcpResponseMsg{err: err}
 	}
-	output := renderResultString(tool, res)
-	if res.IsError {
-		output = ui.Errorf("%s returned an error\n%s", tool, output)
-	}
-	return mcpResponseMsg{output: output}
+	return mcpResponseMsg{output: execRes.Output}
 }
 
 func (m *breezeModel) runToolCmd(tool string, args map[string]any) tea.Cmd {
 	return func() tea.Msg {
-		res, err := m.client.CallTool(m.ctx, tool, args)
+		execRes, err := ExecuteParsed(m.ctx, m.client, ParsedInput{Tool: tool, Args: args})
 		if err != nil {
 			return mcpResponseMsg{err: err}
 		}
-		output := renderResultString(tool, res)
-		if res.IsError {
-			output = ui.Errorf("%s returned an error\n%s", tool, output)
-		}
-		return mcpResponseMsg{output: output}
+		return mcpResponseMsg{output: execRes.Output}
 	}
 }
 
@@ -264,6 +253,17 @@ func formatHelp() string {
 	b.WriteString(fmt.Sprintf("  %s  %s\n", ui.Keyword.Render("/open <rel_path>"), ui.Muted.Render("Open file from index")))
 	b.WriteString(ui.Dim("  Any other text is sent to dir2mcp.ask"))
 	return b.String()
+}
+
+func formatHelpPlain() string {
+	return strings.Join([]string{
+		"/help - Show help",
+		"/quit - Exit Breeze",
+		"/list [prefix] - List indexed files",
+		"/search <query> - Search corpus",
+		"/open <rel_path> - Open file from index",
+		"Any other text is sent to dir2mcp.ask",
+	}, "\n")
 }
 
 func renderResultString(tool string, res *mcp.ToolCallResult) string {
@@ -353,23 +353,7 @@ func renderAskString(sc map[string]any) string {
 	if answer != "" {
 		b.WriteString(answer + "\n")
 	}
-	if citations, ok := sc["citations"].([]any); ok && len(citations) > 0 {
-		seen := map[string]bool{}
-		ordered := []string{}
-		for _, it := range citations {
-			m, ok := it.(map[string]any)
-			if !ok {
-				continue
-			}
-			path := asString(m["rel_path"])
-			span, _ := m["span"].(map[string]any)
-			c := mcp.CitationForSpan(path, span)
-			if !seen[c] {
-				seen[c] = true
-				ordered = append(ordered, c)
-			}
-		}
-		sort.Strings(ordered)
+	if ordered := citationsFor("dir2mcp.ask", sc); len(ordered) > 0 {
 		if len(ordered) > 0 {
 			styled := make([]string, len(ordered))
 			for i, c := range ordered {

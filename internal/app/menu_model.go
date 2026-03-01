@@ -75,6 +75,11 @@ func (m *MenuModel) SetItems(items []MenuItem) {
 	}
 }
 
+// SetIntro replaces the intro lines shown above the menu.
+func (m *MenuModel) SetIntro(intro []string) {
+	m.config.Intro = intro
+}
+
 func (m MenuModel) Init() tea.Cmd {
 	if m.animate {
 		return tickReveal()
@@ -104,7 +109,6 @@ func (m MenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// If still revealing, skip to showing all items on any key press.
 		if m.revealedCount >= 0 {
 			m.revealedCount = -1
-			return m, nil
 		}
 		switch msg.String() {
 		case "up", "k":
@@ -131,83 +135,102 @@ func (m MenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m MenuModel) View() string {
-	var b strings.Builder
-
-	// Logo
-	if m.config.ShowLogo {
-		b.WriteString(RenderLogo(m.width))
-		b.WriteByte('\n')
-		b.WriteByte('\n')
+	if m.width == 0 {
+		return ""
 	}
 
-	// Collect body lines for centering
-	var body []string
-
-	// Title
+	var headerItems []string
 	if m.config.Title != "" {
-		body = append(body, styleBrandStrong.Render(m.config.Title))
+		headerItems = append(headerItems, styleTitle.Render(m.config.Title))
 	}
-
-	// Intro
 	for _, line := range m.config.Intro {
-		body = append(body, styleMuted.Render(line))
+		headerItems = append(headerItems, styleMuted.Render(line))
 	}
-	body = append(body, "") // spacer
+	header := lipgloss.JoinVertical(lipgloss.Center, headerItems...)
 
-	// Determine how many items to show.
+	var menuLines []string
+	maxLabelWidth := 0
+	for _, item := range m.config.Items {
+		l := lipgloss.Width(item.Label)
+		if item.Badge != "" {
+			l += lipgloss.Width(" [" + item.Badge + "]")
+		}
+		if l > maxLabelWidth {
+			maxLabelWidth = l
+		}
+	}
+
 	showCount := len(m.config.Items)
 	if m.revealedCount >= 0 {
 		showCount = m.revealedCount
 	}
 
-	// Menu items
 	for i, item := range m.config.Items {
 		if i >= showCount {
 			break
 		}
 
-		cursor := "  "
-		labelStyle := styleMuted
-		descStyle := styleDescription
-		if i == m.cursor {
-			cursor = styleBrandStrong.Render("> ")
-			labelStyle = styleSelected
-			descStyle = styleSelectedDesc
-		}
+		isSelected := i == m.cursor
 
-		line := cursor + labelStyle.Render(item.Label)
-
-		// Badge (e.g. "[running]")
+		badgeStr := ""
 		if item.Badge != "" {
-			bs := styleSubtle
-			if item.BadgeStyle != nil {
-				bs = *item.BadgeStyle
+			if isSelected {
+				badgeStr = " [" + item.Badge + "]"
+			} else {
+				bs := styleSubtle
+				if item.BadgeStyle != nil {
+					bs = *item.BadgeStyle
+				}
+				badgeStr = " " + bs.Render("["+item.Badge+"]")
 			}
-			line += " " + bs.Render(fmt.Sprintf("[%s]", item.Badge))
 		}
 
-		if item.Description != "" {
-			line += "  " + descStyle.Render(item.Description)
+		padding := maxLabelWidth - lipgloss.Width(item.Label)
+		if item.Badge != "" {
+			padding = maxLabelWidth - (lipgloss.Width(item.Label) + lipgloss.Width(" ["+item.Badge+"]"))
 		}
-		body = append(body, line)
-	}
-
-	body = append(body, "") // spacer
-	body = append(body, styleSubtle.Render(m.config.Controls))
-
-	// Center the body block
-	tier := ChooseTier(m.width)
-	if tier == LogoCompact {
-		for _, line := range body {
-			b.WriteString(padLine(line, compactLeftPad))
-			b.WriteByte('\n')
+		if padding < 0 {
+			padding = 0
 		}
-	} else {
-		for _, line := range centerBlockLines(body, m.width) {
-			b.WriteString(line)
-			b.WriteByte('\n')
+
+		paddedLabel := item.Label + badgeStr + strings.Repeat(" ", padding)
+
+		if isSelected {
+			row := fmt.Sprintf("  %s %s", styleSelected.Render("›"), styleSelectedRow.Render(" "+paddedLabel+" ")+"   "+styleSelectedDesc.Render(item.Description))
+			menuLines = append(menuLines, row)
+		} else {
+			row := fmt.Sprintf("    %s   %s", styleMuted.Render(paddedLabel), styleDescription.Render(item.Description))
+			menuLines = append(menuLines, row)
 		}
 	}
 
-	return b.String()
+	menuBox := styleMenuBox.Render(lipgloss.JoinVertical(lipgloss.Left, menuLines...))
+	footer := styleSubtle.Render(m.config.Controls)
+
+	content := lipgloss.JoinVertical(lipgloss.Center, header, menuBox, footer)
+
+	if m.config.ShowLogo {
+		logo := RenderLogo(m.width)
+		var b strings.Builder
+		b.WriteString(logo)
+		b.WriteByte('\n')
+		b.WriteByte('\n')
+
+		contentLines := strings.Split(content, "\n")
+		tier := ChooseTier(m.width)
+		if tier == LogoCompact {
+			for _, line := range contentLines {
+				b.WriteString(padLine(line, compactLeftPad))
+				b.WriteByte('\n')
+			}
+		} else {
+			for _, line := range centerBlockLines(contentLines, m.width) {
+				b.WriteString(line)
+				b.WriteByte('\n')
+			}
+		}
+		return b.String()
+	}
+
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content)
 }

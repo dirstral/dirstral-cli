@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -8,7 +9,9 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -16,16 +19,26 @@ const protocolVersion = "2025-11-25"
 
 type Client struct {
 	endpoint   string
+	transport  string
 	verbose    bool
 	authToken  string
 	sessionID  string
 	httpClient *http.Client
+	stdio      *stdioClient
 	nextID     int
 }
 
+type stdioClient struct {
+	cmd    *exec.Cmd
+	stdin  io.WriteCloser
+	stdout *bufio.Reader
+	mu     sync.Mutex
+}
+
 type Tool struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	InputSchema map[string]any `json:"inputSchema"`
 }
 
 type ContentItem struct {
@@ -61,8 +74,17 @@ type jsonRPCResponse struct {
 }
 
 func New(endpoint string, verbose bool) *Client {
+	return NewWithTransport(endpoint, "streamable-http", verbose)
+}
+
+func NewWithTransport(endpoint, transport string, verbose bool) *Client {
+	transport = strings.TrimSpace(strings.ToLower(transport))
+	if transport == "" {
+		transport = "streamable-http"
+	}
 	return &Client{
 		endpoint:  endpoint,
+		transport: transport,
 		verbose:   verbose,
 		authToken: strings.TrimSpace(os.Getenv("DIR2MCP_AUTH_TOKEN")),
 		httpClient: &http.Client{
@@ -72,7 +94,30 @@ func New(endpoint string, verbose bool) *Client {
 	}
 }
 
+func (c *Client) Close() error {
+	if c.stdio == nil {
+		return nil
+	}
+	if c.stdio.stdin != nil {
+		_ = c.stdio.stdin.Close()
+	}
+	err := c.stdio.cmd.Wait()
+	c.stdio = nil
+	if err == nil {
+		return nil
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 0 {
+		return nil
+	}
+	return err
+}
+
 func (c *Client) Initialize(ctx context.Context) error {
+	if c.transport == "stdio" {
+		if err := c.startStdio(ctx); err != nil {
+			return err
+		}
+	}
 	params := map[string]any{
 		"protocolVersion": protocolVersion,
 		"capabilities":    map[string]any{"tools": map[string]any{}},
@@ -85,11 +130,15 @@ func (c *Client) Initialize(ctx context.Context) error {
 	if status < 200 || status >= 300 {
 		return fmt.Errorf("initialize failed with http status %d", status)
 	}
-	sessionID := headers.Get("MCP-Session-Id")
-	if sessionID == "" {
-		return fmt.Errorf("initialize response missing MCP-Session-Id")
+	if c.transport == "streamable-http" {
+		sessionID := headers.Get("MCP-Session-Id")
+		if sessionID == "" {
+			return fmt.Errorf("initialize response missing MCP-Session-Id")
+		}
+		c.sessionID = sessionID
+	} else {
+		c.sessionID = "stdio"
 	}
-	c.sessionID = sessionID
 
 	_ = body
 	_, _, _, _ = c.call(ctx, "notifications/initialized", map[string]any{}, false)
@@ -169,6 +218,13 @@ func (c *Client) CallTool(ctx context.Context, name string, args map[string]any)
 }
 
 func (c *Client) call(ctx context.Context, method string, params map[string]any, withID bool) (map[string]any, int, http.Header, error) {
+	if c.transport == "stdio" {
+		return c.callStdio(ctx, method, params, withID)
+	}
+	if c.transport != "streamable-http" {
+		return nil, 0, nil, fmt.Errorf("unsupported transport %q", c.transport)
+	}
+
 	var id *int
 	if withID {
 		n := c.nextID
@@ -229,6 +285,121 @@ func (c *Client) call(ctx context.Context, method string, params map[string]any,
 		fmt.Printf("[mcp] <- %s (%d)\n", method, resp.StatusCode)
 	}
 	return raw, resp.StatusCode, resp.Header, nil
+}
+
+func (c *Client) startStdio(ctx context.Context) error {
+	if c.stdio != nil {
+		return nil
+	}
+	cmdline := strings.TrimSpace(c.endpoint)
+	if cmdline == "" {
+		cmdline = "dir2mcp"
+	}
+	parts := strings.Fields(cmdline)
+	if len(parts) == 0 {
+		return fmt.Errorf("stdio transport requires a command")
+	}
+	cmd := exec.CommandContext(ctx, parts[0], parts[1:]...)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return err
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	c.stdio = &stdioClient{cmd: cmd, stdin: stdin, stdout: bufio.NewReader(stdout)}
+	return nil
+}
+
+func (c *Client) callStdio(ctx context.Context, method string, params map[string]any, withID bool) (map[string]any, int, http.Header, error) {
+	if c.stdio == nil {
+		if err := c.startStdio(ctx); err != nil {
+			return nil, 0, nil, err
+		}
+	}
+
+	var id *int
+	if withID {
+		n := c.nextID
+		c.nextID++
+		id = &n
+	}
+	message := jsonRPCRequest{JSONRPC: "2.0", ID: id, Method: method, Params: params}
+	payload, err := json.Marshal(message)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+
+	c.stdio.mu.Lock()
+	defer c.stdio.mu.Unlock()
+	if err := writeStdioMessage(c.stdio.stdin, payload); err != nil {
+		return nil, 0, nil, err
+	}
+	if !withID {
+		return map[string]any{}, http.StatusAccepted, http.Header{}, nil
+	}
+	bodyBytes, err := readStdioMessage(c.stdio.stdout)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+
+	var envelope jsonRPCResponse
+	if err := json.Unmarshal(bodyBytes, &envelope); err != nil {
+		return nil, 0, nil, err
+	}
+	if envelope.Error != nil {
+		return nil, 0, nil, fmt.Errorf("json-rpc error %d: %s", envelope.Error.Code, envelope.Error.Message)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(bodyBytes, &raw); err != nil {
+		return nil, 0, nil, err
+	}
+	return raw, http.StatusOK, http.Header{}, nil
+}
+
+func writeStdioMessage(w io.Writer, payload []byte) error {
+	if _, err := fmt.Fprintf(w, "Content-Length: %d\r\n\r\n", len(payload)); err != nil {
+		return err
+	}
+	_, err := w.Write(payload)
+	return err
+}
+
+func readStdioMessage(r *bufio.Reader) ([]byte, error) {
+	contentLength := -1
+	for {
+		line, err := r.ReadString('\n')
+		if err != nil {
+			return nil, err
+		}
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			break
+		}
+		parts := strings.SplitN(trimmed, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(parts[0]), "Content-Length") {
+			var n int
+			if _, err := fmt.Sscanf(strings.TrimSpace(parts[1]), "%d", &n); err == nil {
+				contentLength = n
+			}
+		}
+	}
+	if contentLength < 0 {
+		return nil, fmt.Errorf("missing Content-Length header")
+	}
+	body := make([]byte, contentLength)
+	if _, err := io.ReadFull(r, body); err != nil {
+		return nil, err
+	}
+	return body, nil
 }
 
 func flattenHeaders(h http.Header) map[string]string {

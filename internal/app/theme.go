@@ -37,12 +37,15 @@ var (
 // Reusable lipgloss styles.
 var (
 	styleBrandStrong  = lipgloss.NewStyle().Foreground(clrBrandStrong).Bold(true)
+	styleTitle        = lipgloss.NewStyle().Foreground(clrBrandStrong).Bold(true).Underline(true)
 	styleMuted        = lipgloss.NewStyle().Foreground(clrMuted)
 	styleSubtle       = lipgloss.NewStyle().Foreground(clrSubtle)
 	styleSelected     = lipgloss.NewStyle().Foreground(clrBrandStrong).Bold(true)
+	styleSelectedRow  = lipgloss.NewStyle().Background(clrBrandStrong).Foreground(lipgloss.Color("0")).Bold(true)
 	styleDescription  = lipgloss.NewStyle().Foreground(clrSubtle).Italic(true)
-	styleSelectedDesc = lipgloss.NewStyle().Foreground(clrMuted).Italic(true)
+	styleSelectedDesc = lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Italic(true)
 	styleGreen        = lipgloss.NewStyle().Foreground(clrGreen)
+	styleMenuBox      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(clrSubtle).Padding(1, 2).MarginTop(1).MarginBottom(1)
 )
 
 // paint wraps text in raw ANSI codes. Used by logo rendering.

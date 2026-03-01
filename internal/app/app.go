@@ -30,6 +30,7 @@ type appModel struct {
 	result        appResult
 	statusLoaded  bool
 	serverRunning bool
+	tipIndex      int
 }
 
 func newAppModel(screen screenID) appModel {
@@ -49,6 +50,9 @@ func newAppModel(screen screenID) appModel {
 func (m appModel) Init() tea.Cmd {
 	// Kick off both the initial status check and the menu reveal animation.
 	menuInit := m.menu.Init()
+	if m.screen == screenStart {
+		return tea.Batch(pollLighthouseStatus, menuInit, tickStartupTip())
+	}
 	return tea.Batch(pollLighthouseStatus, menuInit)
 }
 
@@ -60,6 +64,13 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateDynamicItems(msg)
 		// Schedule next poll.
 		return m, tickLighthouseStatus()
+	case tipTickMsg:
+		if m.screen != screenStart {
+			return m, nil
+		}
+		m.tipIndex++
+		m.refreshStartupIntro()
+		return m, tickStartupTip()
 	default:
 		updated, cmd := m.menu.Update(msg)
 		m.menu = updated.(MenuModel)
@@ -73,6 +84,16 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, cmd
 	}
+}
+
+func (m *appModel) refreshStartupIntro() {
+	if m.screen != screenStart {
+		return
+	}
+	m.menu.SetIntro([]string{
+		"Launch mode: Breeze (chat), Tempest (voice), Lighthouse (host MCP)",
+		StartupTip(m.tipIndex),
+	})
 }
 
 // updateDynamicItems adjusts menu items based on lighthouse status.

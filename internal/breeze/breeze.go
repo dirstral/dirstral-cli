@@ -1,8 +1,12 @@
 package breeze
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 
 	"github.com/alibilge/dirstral-cli/internal/mcp"
@@ -14,6 +18,7 @@ type Options struct {
 	Transport string
 	Model     string
 	Verbose   bool
+	JSON      bool
 }
 
 var requiredTools = []string{
@@ -34,11 +39,17 @@ var autoApprove = map[string]bool{
 }
 
 func Run(ctx context.Context, opts Options) error {
-	if opts.Transport != "streamable-http" {
-		return fmt.Errorf("transport %q is not supported in v1; use streamable-http", opts.Transport)
+	if opts.Transport == "" {
+		opts.Transport = "streamable-http"
+	}
+	if opts.Model == "" {
+		opts.Model = "mistral-small-latest"
 	}
 
-	client := mcp.New(opts.MCPURL, opts.Verbose)
+	client := mcp.NewWithTransport(opts.MCPURL, opts.Transport, opts.Verbose)
+	defer func() {
+		_ = client.Close()
+	}()
 	if err := client.Initialize(ctx); err != nil {
 		return fmt.Errorf("mcp initialize failed: %w", err)
 	}
@@ -49,8 +60,11 @@ func Run(ctx context.Context, opts Options) error {
 	if err := validateTools(tools); err != nil {
 		return err
 	}
+	if opts.JSON {
+		return RunJSONLoopWithIO(ctx, client, opts, os.Stdin, os.Stdout)
+	}
 
-	p := tea.NewProgram(initialModel(ctx, client, opts.MCPURL, client.SessionID()), tea.WithAltScreen())
+	p := tea.NewProgram(initialModel(ctx, client, opts), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		return err
 	}
@@ -58,7 +72,7 @@ func Run(ctx context.Context, opts Options) error {
 }
 
 func AskQuestion(ctx context.Context, client *mcp.Client, question string) (string, error) {
-	res, err := client.CallTool(ctx, "dir2mcp.ask", map[string]any{"question": question, "k": 8})
+	res, err := client.CallTool(ctx, "dir2mcp.ask", map[string]any{"question": question, "k": AskTopKForModel("")})
 	if err != nil {
 		return "", err
 	}
@@ -71,6 +85,86 @@ func AskQuestion(ctx context.Context, client *mcp.Client, question string) (stri
 		}
 	}
 	return "", nil
+}
+
+type jsonEvent struct {
+	Version string         `json:"version"`
+	Type    string         `json:"type"`
+	Data    map[string]any `json:"data"`
+}
+
+func runJSONLoop(ctx context.Context, client *mcp.Client, opts Options, in io.Reader, out io.Writer) error {
+	enc := json.NewEncoder(out)
+	write := func(kind string, data map[string]any) error {
+		return enc.Encode(jsonEvent{Version: "v1", Type: kind, Data: data})
+	}
+
+	if err := write("session", map[string]any{
+		"mcp_url":    opts.MCPURL,
+		"transport":  opts.Transport,
+		"model":      opts.Model,
+		"session_id": client.SessionID(),
+	}); err != nil {
+		return err
+	}
+
+	s := bufio.NewScanner(in)
+	for s.Scan() {
+		input := strings.TrimSpace(s.Text())
+		if input == "" {
+			continue
+		}
+		parsed, err := parseForJSON(input, opts.Model)
+		if err != nil {
+			if err := write("error", map[string]any{"message": err.Error()}); err != nil {
+				return err
+			}
+			continue
+		}
+		if parsed.Quit {
+			if err := write("exit", map[string]any{"reason": "user"}); err != nil {
+				return err
+			}
+			return nil
+		}
+		if parsed.Help {
+			if err := write("help", map[string]any{"text": formatHelpPlain()}); err != nil {
+				return err
+			}
+			continue
+		}
+		if needsApproval(parsed.Tool) {
+			if err := write("approval_required", map[string]any{"tool": parsed.Tool, "approved": false}); err != nil {
+				return err
+			}
+			continue
+		}
+		execRes, err := ExecuteParsed(ctx, client, parsed)
+		if err != nil {
+			if err := write("error", map[string]any{"tool": parsed.Tool, "message": err.Error()}); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := write("tool_result", map[string]any{
+			"tool":               execRes.Tool,
+			"args":               execRes.Args,
+			"is_error":           execRes.Result != nil && execRes.Result.IsError,
+			"output":             execRes.Output,
+			"citations":          execRes.Citations,
+			"structured_content": execRes.Result.StructuredContent,
+		}); err != nil {
+			return err
+		}
+	}
+	if err := s.Err(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func RunJSONLoopWithIO(ctx context.Context, client *mcp.Client, opts Options, in io.Reader, out io.Writer) error {
+	return runJSONLoop(ctx, client, opts, in, out)
 }
 
 func validateTools(tools []mcp.Tool) error {
