@@ -169,3 +169,31 @@ func TestHelpToggleRecomputesViewportForSmallTerminal(t *testing.T) {
 		t.Fatalf("expected compact help text in tiny terminal, got: %q", view)
 	}
 }
+
+func TestClearCommandResetsMessagesToBanner(t *testing.T) {
+	m := breezeModel{
+		textInput: textinput.New(),
+		viewport:  viewport.New(40, 8),
+		ready:     true,
+		modelName: "mistral-small-latest",
+		banner:    []string{"connected"},
+		messages:  []string{"connected", "old message"},
+	}
+
+	msg := m.processInputCmd("/clear")()
+	resp, ok := msg.(mcpResponseMsg)
+	if !ok {
+		t.Fatalf("expected mcpResponseMsg, got %T", msg)
+	}
+	if !resp.clear {
+		t.Fatal("expected /clear command to produce clear response")
+	}
+
+	m, _ = updateBreezeModel(t, m, resp)
+	if got, want := len(m.messages), 1; got != want {
+		t.Fatalf("message count after clear: got %d want %d", got, want)
+	}
+	if got := m.messages[0]; got != "connected" {
+		t.Fatalf("expected banner message to remain, got %q", got)
+	}
+}

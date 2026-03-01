@@ -94,6 +94,7 @@ type jsonEvent struct {
 }
 
 func runJSONLoop(ctx context.Context, client *mcp.Client, opts Options, in io.Reader, out io.Writer) error {
+	planner := NewPlanner(opts.Model)
 	enc := json.NewEncoder(out)
 	write := func(kind string, data map[string]any) error {
 		return enc.Encode(jsonEvent{Version: "v1", Type: kind, Data: data})
@@ -114,45 +115,68 @@ func runJSONLoop(ctx context.Context, client *mcp.Client, opts Options, in io.Re
 		if input == "" {
 			continue
 		}
-		parsed, err := parseForJSON(input, opts.Model)
+		plan, err := planner.Plan(input)
 		if err != nil {
 			if err := write("error", map[string]any{"message": err.Error()}); err != nil {
 				return err
 			}
 			continue
 		}
-		if parsed.Quit {
+		if plan.Quit {
 			if err := write("exit", map[string]any{"reason": "user"}); err != nil {
 				return err
 			}
 			return nil
 		}
-		if parsed.Help {
+		if plan.Help {
 			if err := write("help", map[string]any{"text": formatHelpPlain()}); err != nil {
 				return err
 			}
 			continue
 		}
-		if needsApproval(parsed.Tool) {
-			if err := write("approval_required", map[string]any{"tool": parsed.Tool, "approved": false}); err != nil {
+		if plan.Clear {
+			if err := write("cleared", map[string]any{"status": "ok"}); err != nil {
 				return err
 			}
 			continue
 		}
-		execRes, err := ExecuteParsed(ctx, client, parsed)
-		if err != nil {
-			if err := write("error", map[string]any{"tool": parsed.Tool, "message": err.Error()}); err != nil {
+		if len(plan.Steps) == 0 {
+			continue
+		}
+
+		var approvalTool string
+		for _, step := range plan.Steps {
+			if needsApproval(step.Tool) {
+				approvalTool = step.Tool
+				break
+			}
+		}
+		if approvalTool != "" {
+			if err := write("approval_required", map[string]any{"tool": approvalTool, "approved": false}); err != nil {
 				return err
 			}
 			continue
+		}
+		execRes, err := ExecutePlan(ctx, client, plan)
+		if err != nil {
+			if err := write("error", map[string]any{"tool": plan.Steps[0].Tool, "message": err.Error()}); err != nil {
+				return err
+			}
+			continue
+		}
+		last := execRes.Executions[len(execRes.Executions)-1]
+		usedTools := make([]string, 0, len(execRes.Executions))
+		for _, ex := range execRes.Executions {
+			usedTools = append(usedTools, ex.Tool)
 		}
 		if err := write("tool_result", map[string]any{
-			"tool":               execRes.Tool,
-			"args":               execRes.Args,
-			"is_error":           execRes.Result != nil && execRes.Result.IsError,
+			"tool":               last.Tool,
+			"args":               last.Args,
+			"tools":              usedTools,
+			"is_error":           last.Result != nil && last.Result.IsError,
 			"output":             execRes.Output,
 			"citations":          execRes.Citations,
-			"structured_content": execRes.Result.StructuredContent,
+			"structured_content": last.Result.StructuredContent,
 		}); err != nil {
 			return err
 		}

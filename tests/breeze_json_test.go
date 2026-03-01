@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/alibilge/dirstral-cli/internal/breeze"
@@ -67,6 +68,7 @@ func TestParseInputUsesModelProfileForAsk(t *testing.T) {
 
 func TestBreezeJSONOutputStructureAndModelPropagation(t *testing.T) {
 	var askK any
+	calledTools := make([]string, 0)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			_ = r.Body.Close()
@@ -84,23 +86,47 @@ func TestBreezeJSONOutputStructureAndModelPropagation(t *testing.T) {
 			w.WriteHeader(http.StatusAccepted)
 		case "tools/call":
 			params, _ := req["params"].(map[string]any)
+			name, _ := params["name"].(string)
 			args, _ := params["arguments"].(map[string]any)
-			askK = args["k"]
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"jsonrpc": "2.0",
-				"id":      req["id"],
-				"result": map[string]any{
-					"isError": false,
-					"content": []map[string]any{{"type": "text", "text": "answer"}},
-					"structuredContent": map[string]any{
-						"answer": "answer",
-						"citations": []map[string]any{{
-							"rel_path": "src/main.go",
-							"span":     map[string]any{"kind": "lines", "start_line": 3, "end_line": 9},
-						}},
+			calledTools = append(calledTools, name)
+			switch name {
+			case "dir2mcp.search":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result": map[string]any{
+						"isError": false,
+						"content": []map[string]any{{"type": "text", "text": "search ok"}},
+						"structuredContent": map[string]any{
+							"hits": []map[string]any{{
+								"rel_path": "src/main.go",
+								"snippet":  "search snippet",
+								"score":    0.88,
+								"span":     map[string]any{"kind": "lines", "start_line": 1, "end_line": 4},
+							}},
+						},
 					},
-				},
-			})
+				})
+			case "dir2mcp.ask":
+				askK = args["k"]
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result": map[string]any{
+						"isError": false,
+						"content": []map[string]any{{"type": "text", "text": "answer"}},
+						"structuredContent": map[string]any{
+							"answer": "answer",
+							"citations": []map[string]any{{
+								"rel_path": "src/main.go",
+								"span":     map[string]any{"kind": "lines", "start_line": 3, "end_line": 9},
+							}},
+						},
+					},
+				})
+			default:
+				t.Fatalf("unexpected tools/call name: %s", name)
+			}
 		default:
 			t.Fatalf("unexpected method: %s", method)
 		}
@@ -121,6 +147,9 @@ func TestBreezeJSONOutputStructureAndModelPropagation(t *testing.T) {
 
 	if askK != float64(12) {
 		t.Fatalf("expected ask k=12 from model profile, got %v", askK)
+	}
+	if len(calledTools) != 2 || calledTools[0] != "dir2mcp.search" || calledTools[1] != "dir2mcp.ask" {
+		t.Fatalf("expected planner path search -> ask, got %v", calledTools)
 	}
 
 	events := decodeEvents(t, out.Bytes())
@@ -147,6 +176,13 @@ func TestBreezeJSONOutputStructureAndModelPropagation(t *testing.T) {
 	data, _ := toolEvent["data"].(map[string]any)
 	if data["tool"] != "dir2mcp.ask" {
 		t.Fatalf("unexpected tool_result tool: %v", data["tool"])
+	}
+	tools, _ := data["tools"].([]any)
+	if len(tools) != 2 {
+		t.Fatalf("expected planner tool list in response, got %v", data["tools"])
+	}
+	if output, _ := data["output"].(string); !strings.HasPrefix(output, "Planner path") {
+		t.Fatalf("expected analytical synthesis output to include planner path, got %q", output)
 	}
 	citations, _ := data["citations"].([]any)
 	if len(citations) == 0 {
@@ -220,5 +256,48 @@ func TestBreezeJSONHelpErrorAndExitEvents(t *testing.T) {
 	exitData, _ := events[3]["data"].(map[string]any)
 	if exitData["reason"] != "user" {
 		t.Fatalf("expected exit reason=user, got %#v", events[3])
+	}
+}
+
+func TestBreezeJSONClearEvent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			_ = r.Body.Close()
+		}()
+		var req map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		method, _ := req["method"].(string)
+		switch method {
+		case "initialize":
+			w.Header().Set("MCP-Session-Id", "sess-test")
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req["id"], "result": map[string]any{}})
+		case "notifications/initialized":
+			w.WriteHeader(http.StatusAccepted)
+		default:
+			t.Fatalf("unexpected method: %s", method)
+		}
+	}))
+	defer server.Close()
+
+	client := mcp.New(server.URL, false)
+	if err := client.Initialize(context.Background()); err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+
+	in := bytes.NewBufferString("/clear\n/quit\n")
+	out := &bytes.Buffer{}
+	opts := breeze.Options{MCPURL: server.URL, Transport: "streamable-http", Model: "mistral-small-latest", JSON: true}
+	if err := breeze.RunJSONLoopWithIO(context.Background(), client, opts, in, out); err != nil {
+		t.Fatalf("json loop: %v", err)
+	}
+
+	events := decodeEvents(t, out.Bytes())
+	if len(events) != 3 {
+		t.Fatalf("expected exactly 3 events (session/cleared/exit), got %d", len(events))
+	}
+	if events[1]["type"] != "cleared" {
+		t.Fatalf("expected second event type=cleared, got %v", events[1]["type"])
 	}
 }
