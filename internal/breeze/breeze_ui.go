@@ -79,6 +79,7 @@ func (m breezeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if msg.String() == "?" || msg.String() == "ctrl+k" {
 			m.showHelp = !m.showHelp
+			m.applyWindowSize(m.width, m.height)
 			return m, nil
 		}
 		if m.showHelp {
@@ -145,24 +146,7 @@ func (m breezeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		headerHeight := 0
-		footerHeight := 3 // input line + some margin
-		verticalMarginHeight := headerHeight + footerHeight
-		vpWidth := maxInt(msg.Width-2, 20)
-		vpHeight := maxInt(msg.Height-verticalMarginHeight, 4)
-		m.textInput.Width = maxInt(msg.Width-16, 16)
-
-		if !m.ready {
-			m.viewport = viewport.New(vpWidth, vpHeight)
-			m.viewport.YPosition = headerHeight
-			m.viewport.SetContent(strings.Join(m.messages, "\n\n"))
-			m.ready = true
-		} else {
-			m.viewport.Width = vpWidth
-			m.viewport.Height = vpHeight
-		}
+		m.applyWindowSize(msg.Width, msg.Height)
 
 	case mcpResponseMsg:
 		m.isLoading = false
@@ -198,11 +182,11 @@ func (m breezeModel) View() string {
 	var b strings.Builder
 
 	b.WriteString(m.viewport.View())
-	b.WriteString("\n\n")
+	b.WriteString("\n")
 	if m.showHelp {
-		help := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(ui.ClrSubtle).Padding(0, 1).MaxWidth(maxInt(m.width-2, 24)).Render(formatHelp())
+		help := m.renderHelpBlock(m.width, m.height)
 		b.WriteString(help)
-		b.WriteString("\n\n")
+		b.WriteString("\n")
 	}
 
 	if m.confirmingTool != "" {
@@ -221,6 +205,49 @@ func (m breezeModel) View() string {
 	b.WriteString(ui.Dim("? help"))
 
 	return b.String()
+}
+
+func (m *breezeModel) applyWindowSize(width, height int) {
+	if width <= 0 || height <= 0 {
+		return
+	}
+
+	m.width = width
+	m.height = height
+
+	vpWidth := maxInt(width-2, 1)
+	m.textInput.Width = maxInt(width-16, 1)
+
+	reservedHeight := 2 // input row + status row
+	if m.showHelp {
+		helpBlock := m.renderHelpBlock(width, height)
+		reservedHeight += lipgloss.Height(helpBlock) + 1
+	}
+	vpHeight := maxInt(height-reservedHeight, 1)
+
+	if !m.ready {
+		m.viewport = viewport.New(vpWidth, vpHeight)
+		m.viewport.SetContent(strings.Join(m.messages, "\n\n"))
+		m.ready = true
+		return
+	}
+
+	m.viewport.Width = vpWidth
+	m.viewport.Height = vpHeight
+}
+
+func (m breezeModel) renderHelpBlock(width, height int) string {
+	helpText := formatHelp()
+	if width < 56 || height < 14 {
+		helpText = "Help: /help, /quit, /list [prefix], /search <query>, /open <rel_path>. Press ? to close."
+	}
+
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(ui.ClrSubtle).
+		Padding(0, 1).
+		MaxWidth(maxInt(width-2, 1)).
+		Render(helpText)
 }
 
 func maxInt(a, b int) int {

@@ -26,18 +26,25 @@ const (
 )
 
 type tempestModel struct {
-	opts     Options
-	client   *mcp.Client
-	ctx      context.Context
-	viewport viewport.Model
-	spinner  spinner.Model
-	state    appState
-	messages []string
-	ready    bool
-	width    int
-	height   int
-	showHelp bool
+	opts           Options
+	client         *mcp.Client
+	ctx            context.Context
+	viewport       viewport.Model
+	spinner        spinner.Model
+	state          appState
+	messages       []string
+	ready          bool
+	width          int
+	height         int
+	showHelp       bool
+	helpCache      string
+	helpCacheWidth int
 }
+
+const (
+	tinyResizeThresholdWidth  = 2
+	tinyResizeThresholdHeight = 2
+)
 
 type recordDoneMsg struct {
 	path string
@@ -94,12 +101,16 @@ func (m tempestModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if msg.String() == "?" || msg.String() == "ctrl+k" {
 			m.showHelp = !m.showHelp
+			m.invalidateHelpCache()
+			m.relayout()
 			return m, nil
 		}
 		if m.showHelp {
 			switch msg.String() {
 			case "esc", "q", "?", "ctrl+k":
 				m.showHelp = false
+				m.invalidateHelpCache()
+				m.relayout()
 			}
 			return m, nil
 		}
@@ -115,22 +126,7 @@ func (m tempestModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		headerHeight := 0
-		footerHeight := 2 // status line + margin
-		vpWidth := maxInt(msg.Width-2, 20)
-		vpHeight := maxInt(msg.Height-footerHeight-headerHeight, 4)
-
-		if !m.ready {
-			m.viewport = viewport.New(vpWidth, vpHeight)
-			m.viewport.YPosition = headerHeight
-			m.viewport.SetContent(strings.Join(m.messages, "\n\n"))
-			m.ready = true
-		} else {
-			m.viewport.Width = vpWidth
-			m.viewport.Height = vpHeight
-		}
+		m.applyWindowSize(msg.Width, msg.Height)
 
 	case recordDoneMsg:
 		if msg.err != nil {
@@ -197,19 +193,14 @@ func (m tempestModel) View() string {
 		return "\n  Initializing..."
 	}
 
+	renderWidth := m.renderWidth()
 	var b strings.Builder
 	b.WriteString(m.viewport.View())
-	b.WriteString("\n\n")
+	b.WriteString("\n")
 	if m.showHelp {
-		helpText := strings.Join([]string{
-			ui.Brand.Render("Tempest Keymap"),
-			ui.Muted.Render("enter  start recording"),
-			ui.Muted.Render("esc    quit"),
-			ui.Muted.Render("?      toggle help"),
-		}, "\n")
-		help := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(ui.ClrSubtle).Padding(0, 1).MaxWidth(maxInt(m.width-2, 24)).Render(helpText)
+		help := m.helpForWidth(renderWidth)
 		b.WriteString(help)
-		b.WriteString("\n\n")
+		b.WriteString("\n")
 	}
 
 	status := ""
@@ -226,10 +217,97 @@ func (m tempestModel) View() string {
 		status = ui.Green.Render(m.spinner.View() + " [🔊 Speaking...]")
 	}
 
-	b.WriteString(lipgloss.NewStyle().MaxWidth(maxInt(m.width-2, 20)).Render(status))
+	b.WriteString(lipgloss.NewStyle().MaxWidth(renderWidth).Render(status))
 	b.WriteString("\n")
 	b.WriteString(ui.Dim("? help"))
 	return b.String()
+}
+
+func (m *tempestModel) applyWindowSize(width, height int) {
+	if m.ready {
+		if width <= tinyResizeThresholdWidth {
+			width = m.width
+		}
+		if height <= tinyResizeThresholdHeight {
+			height = m.height
+		}
+	}
+
+	if width <= 0 {
+		width = 1
+	}
+	if height <= 0 {
+		height = 1
+	}
+
+	m.width = width
+	m.height = height
+
+	vpWidth := m.renderWidth()
+	help := m.helpForWidth(vpWidth)
+	vpHeight := maxInt(height-m.footerHeight(help), 1)
+
+	if !m.ready {
+		m.viewport = viewport.New(vpWidth, vpHeight)
+		m.viewport.SetContent(strings.Join(m.messages, "\n\n"))
+		m.ready = true
+		return
+	}
+
+	m.viewport.Width = vpWidth
+	m.viewport.Height = vpHeight
+}
+
+func (m *tempestModel) relayout() {
+	if !m.ready {
+		return
+	}
+	m.applyWindowSize(m.width, m.height)
+}
+
+func (m tempestModel) renderWidth() int {
+	return maxInt(m.width-2, 1)
+}
+
+func (m tempestModel) footerHeight(help string) int {
+	footerLines := 2
+	if help != "" {
+		footerLines += 1 + lipgloss.Height(help)
+	}
+	return footerLines
+}
+
+func (m *tempestModel) helpForWidth(width int) string {
+	if !m.showHelp {
+		return ""
+	}
+	if m.helpCache != "" && m.helpCacheWidth == width {
+		return m.helpCache
+	}
+	m.helpCacheWidth = width
+	m.helpCache = renderHelp(width)
+	return m.helpCache
+}
+
+func (m *tempestModel) invalidateHelpCache() {
+	m.helpCache = ""
+	m.helpCacheWidth = 0
+}
+
+func renderHelp(width int) string {
+	helpText := strings.Join([]string{
+		ui.Brand.Render("Tempest Keymap"),
+		ui.Muted.Render("enter  start recording"),
+		ui.Muted.Render("esc    quit"),
+		ui.Muted.Render("?      toggle help"),
+	}, "\n")
+
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(ui.ClrSubtle).
+		Padding(0, 1).
+		MaxWidth(maxInt(width, 1)).
+		Render(helpText)
 }
 
 func maxInt(a, b int) int {
