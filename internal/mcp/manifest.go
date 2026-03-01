@@ -101,7 +101,11 @@ func sanitizeEndpoint(raw string) string {
 		return ""
 	}
 	if !strings.Contains(trimmed, "://") {
-		return trimmed
+		parts := strings.Fields(trimmed)
+		if len(parts) <= 1 {
+			return trimmed
+		}
+		return parts[0] + " <redacted>"
 	}
 	u, err := url.Parse(trimmed)
 	if err != nil {
