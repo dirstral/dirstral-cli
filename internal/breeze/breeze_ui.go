@@ -52,7 +52,7 @@ func initialModel(ctx context.Context, client *mcp.Client, opts Options) breezeM
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(ui.ClrBrand)
 
-	msgs := connectedBanner(opts.MCPURL, opts.Transport, client.SessionID(), opts.Model)
+	msgs := connectedBanner(opts.MCPURL, opts.Transport, client.SessionID(), opts.Model, opts.StartupHint)
 
 	return breezeModel{
 		client:    client,
@@ -153,7 +153,11 @@ func (m breezeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if msg.err != nil {
-			m.messages = append(m.messages, ui.Errorf("%v", msg.err))
+			errLine := ui.Errorf("%v", msg.err)
+			if hint := mcp.ActionableMessageFromError(msg.err); hint != "" {
+				errLine += "\n" + ui.Dim("Hint: "+hint)
+			}
+			m.messages = append(m.messages, errLine)
 		} else if msg.output != "" {
 			m.messages = append(m.messages, msg.output)
 		}

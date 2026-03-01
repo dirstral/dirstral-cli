@@ -2,6 +2,7 @@ package tempest
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -37,6 +38,20 @@ func TestTempestUpdateWindowSizeIgnoresRepeatedTinyResize(t *testing.T) {
 	got = updated.(tempestModel)
 	if got.viewport.Width != expectedWidth || got.viewport.Height != expectedHeight {
 		t.Fatalf("expected viewport to stay stable on repeated tiny resize, got %dx%d", got.viewport.Width, got.viewport.Height)
+	}
+}
+
+func TestTempestToolErrorIncludesActionableHint(t *testing.T) {
+	m := initialModel(context.Background(), nil, Options{MCPURL: "http://example.com"})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	got := updated.(tempestModel)
+
+	updated, _ = got.Update(thinkDoneMsg{err: errors.New("INDEX_NOT_READY")})
+	got = updated.(tempestModel)
+
+	joined := strings.Join(got.messages, "\n")
+	if !strings.Contains(joined, "Hint:") {
+		t.Fatalf("expected actionable hint in tool error output, got %q", joined)
 	}
 }
 

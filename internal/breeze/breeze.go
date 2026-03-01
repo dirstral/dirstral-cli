@@ -14,11 +14,12 @@ import (
 )
 
 type Options struct {
-	MCPURL    string
-	Transport string
-	Model     string
-	Verbose   bool
-	JSON      bool
+	MCPURL      string
+	Transport   string
+	Model       string
+	Verbose     bool
+	JSON        bool
+	StartupHint string
 }
 
 var requiredTools = []string{
@@ -60,6 +61,7 @@ func Run(ctx context.Context, opts Options) error {
 	if err := validateTools(tools); err != nil {
 		return err
 	}
+	opts.StartupHint = startupStatsHint(ctx, client)
 	if opts.JSON {
 		return RunJSONLoopWithIO(ctx, client, opts, os.Stdin, os.Stdout)
 	}
@@ -211,4 +213,21 @@ func validateTools(tools []mcp.Tool) error {
 func asString(v any) string {
 	s, _ := v.(string)
 	return s
+}
+
+func startupStatsHint(ctx context.Context, client *mcp.Client) string {
+	res, err := client.CallTool(ctx, "dir2mcp.stats", map[string]any{})
+	if err != nil {
+		return ""
+	}
+	return startupStatsHintFromContent(res.StructuredContent)
+}
+
+func startupStatsHintFromContent(sc map[string]any) string {
+	indexing, _ := sc["indexing"].(map[string]any)
+	running, _ := indexing["running"].(bool)
+	if !running {
+		return ""
+	}
+	return "Indexing is still running; results may be partial."
 }

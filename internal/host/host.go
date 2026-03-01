@@ -176,6 +176,8 @@ func Status() error {
 		readyStr = ui.Green.Render("true")
 	}
 	fmt.Printf("%s endpoint=%s reachable=%s mcp_ready=%s\n", ui.Brand.Render("lighthouse:"), ui.Cyan.Render(health.MCPURL), reachStr, readyStr)
+	fmt.Printf("%s protocol=%s session_header=%s\n", ui.Brand.Render("lighthouse:"), ui.Cyan.Render(orUnknown(health.ProtocolHeader)), ui.Cyan.Render(orUnknown(health.SessionHeaderName)))
+	fmt.Printf("%s auth_source=%s\n", ui.Brand.Render("lighthouse:"), ui.Cyan.Render(orUnknown(health.AuthSourceType)))
 	if health.LastError != "" {
 		fmt.Printf("%s detail=%s\n", ui.Brand.Render("lighthouse:"), ui.Dim(health.LastError))
 	}
@@ -307,14 +309,17 @@ func terminateProcess(pid int) error {
 
 // HealthInfo describes the current state of a managed dir2mcp process.
 type HealthInfo struct {
-	Found     bool   // true if a state file exists
-	PID       int    // process ID from state file
-	Alive     bool   // true if the process is running
-	MCPURL    string // MCP endpoint URL from state
-	Reachable bool   // true if the MCP endpoint is reachable over TCP
-	MCPReady  bool   // true if initialize + tools/list succeed
-	Ready     bool   // true if alive, reachable, and MCPReady
-	LastError string // last readiness probe error (if any)
+	Found             bool   // true if a state file exists
+	PID               int    // process ID from state file
+	Alive             bool   // true if the process is running
+	MCPURL            string // MCP endpoint URL from state
+	Reachable         bool   // true if the MCP endpoint is reachable over TCP
+	MCPReady          bool   // true if initialize + tools/list succeed
+	Ready             bool   // true if alive, reachable, and MCPReady
+	ProtocolHeader    string // configured MCP protocol header value
+	SessionHeaderName string // configured session header name
+	AuthSourceType    string // configured auth source type
+	LastError         string // last readiness probe error (if any)
 }
 
 // CheckHealth returns the current health of the managed dir2mcp process.
@@ -344,16 +349,28 @@ func CheckHealth() HealthInfo {
 	if !alive && lastErr == "" {
 		lastErr = "process not alive"
 	}
+	protocolHeader, sessionHeaderName, authSourceType := readConnectionContractDetails(state)
 	return HealthInfo{
-		Found:     true,
-		PID:       state.PID,
-		Alive:     alive,
-		MCPURL:    state.MCPURL,
-		Reachable: reachable,
-		MCPReady:  mcpReady,
-		Ready:     ready,
-		LastError: lastErr,
+		Found:             true,
+		PID:               state.PID,
+		Alive:             alive,
+		MCPURL:            state.MCPURL,
+		Reachable:         reachable,
+		MCPReady:          mcpReady,
+		Ready:             ready,
+		ProtocolHeader:    protocolHeader,
+		SessionHeaderName: sessionHeaderName,
+		AuthSourceType:    authSourceType,
+		LastError:         lastErr,
 	}
+}
+
+func orUnknown(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "unknown"
+	}
+	return trimmed
 }
 
 func processAlive(pid int) bool {
@@ -495,6 +512,55 @@ func readConnectionURL(rootDir string) (string, bool) {
 		return "", false
 	}
 	return u, true
+}
+
+type connectionDetailsFile struct {
+	Headers     map[string]string `json:"headers"`
+	Session     connectionSession `json:"session"`
+	TokenSource string            `json:"token_source"`
+	TokenFile   string            `json:"token_file"`
+}
+
+type connectionSession struct {
+	UsesMCPSessionID bool   `json:"uses_mcp_session_id"`
+	HeaderName       string `json:"header_name"`
+}
+
+func readConnectionContractDetails(state State) (protocolHeader, sessionHeaderName, authSourceType string) {
+	root := strings.TrimSpace(state.RootDir)
+	if root == "" {
+		root = resolveRootDir("", state.WorkDir)
+	}
+	if root == "" {
+		return "", "", ""
+	}
+	b, err := os.ReadFile(filepath.Join(root, ".dir2mcp", "connection.json"))
+	if err != nil {
+		return "", "", ""
+	}
+	var payload connectionDetailsFile
+	if err := json.Unmarshal(b, &payload); err != nil {
+		return "", "", ""
+	}
+	if payload.Headers != nil {
+		protocolHeader = strings.TrimSpace(payload.Headers["MCP-Protocol-Version"])
+	}
+	if payload.Session.UsesMCPSessionID {
+		sessionHeaderName = strings.TrimSpace(payload.Session.HeaderName)
+	}
+	authSourceType = deriveAuthSourceType(payload.TokenSource, payload.TokenFile)
+	return protocolHeader, sessionHeaderName, authSourceType
+}
+
+func deriveAuthSourceType(tokenSource, tokenFile string) string {
+	source := strings.TrimSpace(tokenSource)
+	if source != "" {
+		return source
+	}
+	if strings.TrimSpace(tokenFile) != "" {
+		return "file"
+	}
+	return ""
 }
 
 func updateStateEndpoint(pid int, endpoint string) error {

@@ -198,7 +198,11 @@ func (m tempestModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case thinkDoneMsg:
 		if msg.err != nil {
-			m.messages = append(m.messages, ui.Errorf("tool call: %v", msg.err))
+			errLine := ui.Errorf("tool call: %v", msg.err)
+			if hint := mcp.ActionableMessageFromError(msg.err); hint != "" {
+				errLine += "\n" + ui.Dim("Hint: "+hint)
+			}
+			m.messages = append(m.messages, errLine)
 			m.state = stateIdle
 			m.scrollToBottom()
 			return m, nil

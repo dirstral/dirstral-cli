@@ -73,6 +73,18 @@ type jsonRPCResponse struct {
 	} `json:"error,omitempty"`
 }
 
+type jsonRPCError struct {
+	Code    int
+	Message string
+}
+
+func (e *jsonRPCError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return fmt.Sprintf("json-rpc error %d: %s", e.Code, e.Message)
+}
+
 func New(endpoint string, verbose bool) *Client {
 	return NewWithTransport(endpoint, "streamable-http", verbose)
 }
@@ -184,6 +196,12 @@ func (c *Client) CallTool(ctx context.Context, name string, args map[string]any)
 	}
 	start := time.Now()
 	body, status, headers, err := c.call(ctx, "tools/call", params, true)
+	if err != nil && c.transport == "streamable-http" && isSessionNotFoundError(err) {
+		if recoverErr := c.recoverStreamableHTTPSession(ctx); recoverErr != nil {
+			return nil, fmt.Errorf("session recovery failed: %w", recoverErr)
+		}
+		body, status, headers, err = c.call(ctx, "tools/call", params, true)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -215,6 +233,24 @@ func (c *Client) CallTool(ctx context.Context, name string, args map[string]any)
 		Headers:           flattenHeaders(headers),
 	}
 	return out, nil
+}
+
+func (c *Client) recoverStreamableHTTPSession(ctx context.Context) error {
+	previousSessionID := c.sessionID
+	c.sessionID = ""
+	if err := c.Initialize(ctx); err != nil {
+		c.sessionID = previousSessionID
+		return err
+	}
+	return nil
+}
+
+func isSessionNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	code := CanonicalCodeFromError(err)
+	return code == CanonicalCodeSessionNotFound
 }
 
 func (c *Client) call(ctx context.Context, method string, params map[string]any, withID bool) (map[string]any, int, http.Header, error) {
@@ -275,7 +311,7 @@ func (c *Client) call(ctx context.Context, method string, params map[string]any,
 		return nil, resp.StatusCode, resp.Header, err
 	}
 	if envelope.Error != nil {
-		return nil, resp.StatusCode, resp.Header, fmt.Errorf("json-rpc error %d: %s", envelope.Error.Code, envelope.Error.Message)
+		return nil, resp.StatusCode, resp.Header, &jsonRPCError{Code: envelope.Error.Code, Message: envelope.Error.Message}
 	}
 	var raw map[string]any
 	if err := json.Unmarshal(bodyBytes, &raw); err != nil {
@@ -353,7 +389,7 @@ func (c *Client) callStdio(ctx context.Context, method string, params map[string
 		return nil, 0, nil, err
 	}
 	if envelope.Error != nil {
-		return nil, 0, nil, fmt.Errorf("json-rpc error %d: %s", envelope.Error.Code, envelope.Error.Message)
+		return nil, 0, nil, &jsonRPCError{Code: envelope.Error.Code, Message: envelope.Error.Message}
 	}
 	var raw map[string]any
 	if err := json.Unmarshal(bodyBytes, &raw); err != nil {

@@ -2,12 +2,17 @@ package test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/alibilge/dirstral-cli/internal/app"
 	"github.com/alibilge/dirstral-cli/internal/config"
+	"github.com/alibilge/dirstral-cli/internal/host"
 )
 
 func TestBuildTempestOptionsPrefersFlags(t *testing.T) {
@@ -91,4 +96,68 @@ func TestBuildTempestOptionsFallsBackToConfig(t *testing.T) {
 	if got.BaseURL != cfg.ElevenLabs.BaseURL {
 		t.Fatalf("expected config base url, got %s", got.BaseURL)
 	}
+}
+
+func TestResolveMCPURLPrefersExplicitOverride(t *testing.T) {
+	got := app.ResolveMCPURL("http://default-mcp", "http://override-mcp", true)
+	if got != "http://override-mcp" {
+		t.Fatalf("expected explicit override to win, got %q", got)
+	}
+}
+
+func TestResolveMCPURLUsesActiveHostStateWhenNoOverride(t *testing.T) {
+	setTestConfigDir(t)
+
+	server := newProbeReadyServer(t)
+	t.Cleanup(server.Close)
+
+	state := host.State{PID: os.Getpid(), StartedAt: "now", MCPURL: server.URL + "/mcp"}
+	if err := host.SaveState(state); err != nil {
+		t.Fatalf("save host state: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = host.ClearState()
+	})
+
+	got := app.ResolveMCPURL("http://default-mcp", "", false)
+	if got != state.MCPURL {
+		t.Fatalf("expected active host endpoint %q, got %q", state.MCPURL, got)
+	}
+}
+
+func TestResolveMCPURLFallsBackToDefaultWithoutActiveHost(t *testing.T) {
+	setTestConfigDir(t)
+	_ = host.ClearState()
+
+	got := app.ResolveMCPURL("http://default-mcp", "", false)
+	if got != "http://default-mcp" {
+		t.Fatalf("expected default endpoint, got %q", got)
+	}
+}
+
+func newProbeReadyServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/mcp" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		var req map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		method, _ := req["method"].(string)
+		switch method {
+		case "initialize":
+			w.Header().Set("MCP-Session-Id", "test-session")
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req["id"], "result": map[string]any{"ok": true}})
+		case "notifications/initialized":
+			w.WriteHeader(http.StatusAccepted)
+		case "tools/list":
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req["id"], "result": map[string]any{"tools": []map[string]any{{"name": "dir2mcp.list_files"}}}})
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
 }

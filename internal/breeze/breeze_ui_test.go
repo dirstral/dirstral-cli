@@ -1,6 +1,7 @@
 package breeze
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -18,6 +19,21 @@ func updateBreezeModel(t *testing.T, m breezeModel, msg tea.Msg) (breezeModel, t
 		t.Fatalf("expected breezeModel, got %T", next)
 	}
 	return bm, cmd
+}
+
+func TestMCPErrorIncludesActionableHint(t *testing.T) {
+	m := breezeModel{
+		textInput: textinput.New(),
+		viewport:  viewport.New(40, 8),
+		ready:     true,
+		messages:  []string{"connected"},
+	}
+
+	m, _ = updateBreezeModel(t, m, mcpResponseMsg{err: errors.New("SESSION_NOT_FOUND")})
+	joined := strings.Join(m.messages, "\n")
+	if !strings.Contains(joined, "Hint:") {
+		t.Fatalf("expected actionable hint in error output, got %q", joined)
+	}
 }
 
 // keyMsg builds a rune-based key message for tests.
