@@ -387,7 +387,7 @@ func (m model) fieldRows(contentWidth int) []string {
 			valueCell = settingsSelectedValueStyle.Width(valueWidth).Render(valueText)
 		}
 		sourceCell := settingsSourceStyle.Width(sourceWidth).Render(sourceText)
-		if f.Source == config.SourceDefault {
+		if i == m.cursor && f.Source == config.SourceDefault {
 			sourceCell = settingsDefaultSourceStyle.Width(sourceWidth).Render(sourceText)
 		}
 		lines = append(lines, fmt.Sprintf("  %s %s  %s  %s", marker, keyCell, valueCell, sourceCell))
