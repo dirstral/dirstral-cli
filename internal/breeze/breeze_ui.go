@@ -398,9 +398,10 @@ func renderListFilesString(sc map[string]any) string {
 		}
 
 		line := fmt.Sprintf("%s%s %s", icon, ui.Cyan.Render(path), ui.Dim("("+docType+")"))
-		if status == "error" {
+		switch status {
+		case "error":
 			line += " " + ui.Red.Render("[error]")
-		} else if status == "skipped" {
+		case "skipped":
 			line += " " + ui.Yellow.Render("[skipped]")
 		}
 		b.WriteString(line + "\n")
