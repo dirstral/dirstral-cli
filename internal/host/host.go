@@ -149,6 +149,12 @@ func Up(ctx context.Context, opts UpOptions) error {
 }
 
 // UpDetached starts dir2mcp as a managed background process and returns immediately.
+// LogPath returns the path to the lighthouse log file.
+func LogPath() string {
+	return filepath.Join(os.TempDir(), "dirstral-lighthouse.log")
+}
+
+// UpDetached starts dir2mcp as a managed background process and returns immediately.
 func UpDetached(ctx context.Context, opts UpOptions) error {
 	baseCommand, baseArgs, workDir, err := resolveDir2MCPCommand()
 	if err != nil {
@@ -183,7 +189,7 @@ func UpDetached(ctx context.Context, opts UpOptions) error {
 		cmd.Dir = workDir
 	}
 
-	logFile, err := os.OpenFile(filepath.Join(os.TempDir(), "dirstral-lighthouse.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	logFile, err := os.OpenFile(LogPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}

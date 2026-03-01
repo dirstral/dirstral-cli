@@ -37,6 +37,7 @@ func StartMenuConfig() MenuConfig {
 			{Label: string(ChoiceBreeze), Description: "Interactive text chat with MCP tools", Value: string(ChoiceBreeze)},
 			{Label: string(ChoiceTempest), Description: "Voice-powered agent loop", Value: string(ChoiceTempest)},
 			{Label: string(ChoiceLighthouse), Description: "Host and monitor dir2mcp server", Value: string(ChoiceLighthouse)},
+			{Label: string(ChoiceSettings), Description: "Edit config and API settings", Value: string(ChoiceSettings)},
 			{Label: "Exit", Description: "Exit Dirstral", Value: string(ChoiceQuit)},
 		},
 		ShowLogo: true,

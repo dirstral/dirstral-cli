@@ -10,6 +10,7 @@ import (
 	"github.com/alibilge/dirstral-cli/internal/config"
 	"github.com/alibilge/dirstral-cli/internal/host"
 	"github.com/alibilge/dirstral-cli/internal/mcp"
+	"github.com/alibilge/dirstral-cli/internal/settings"
 	"github.com/alibilge/dirstral-cli/internal/tempest"
 	"github.com/spf13/cobra"
 )
@@ -47,6 +48,15 @@ func newRootCommand(cfg config.Config) *cobra.Command {
 					if err := runLighthouseMenu(cfg); err != nil {
 						printUIError(err)
 					}
+				case ChoiceSettings:
+					printModeHeader("Settings")
+					err := settings.Run(cfg)
+					if refreshed, loadErr := config.Load(); loadErr == nil {
+						cfg = refreshed
+					} else {
+						printUIError(fmt.Errorf("reload config: %w", loadErr))
+					}
+					printModeFeedback("Settings", err)
 				default:
 					fmt.Println(styleMuted.Render("bye"))
 					return nil
@@ -326,6 +336,13 @@ func runLighthouseMenu(cfg config.Config) error {
 			printModeHeader("Lighthouse / Server Status")
 			if err := host.Status(); err != nil {
 				printModeFeedbackTo("Lighthouse status", err, "Lighthouse menu")
+				continue
+			}
+			printReturnTo("Lighthouse menu")
+		case lighthouseActionLogs:
+			printModeHeader("Lighthouse / Logs")
+			if err := runLogViewer(); err != nil {
+				printModeFeedbackTo("Lighthouse logs", err, "Lighthouse menu")
 				continue
 			}
 			printReturnTo("Lighthouse menu")

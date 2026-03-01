@@ -43,6 +43,7 @@ const (
 	ChoiceBreeze     StartChoice = "Breeze"
 	ChoiceTempest    StartChoice = "Tempest"
 	ChoiceLighthouse StartChoice = "Lighthouse"
+	ChoiceSettings   StartChoice = "Settings"
 	ChoiceQuit       StartChoice = "Exit"
 )
 
@@ -55,7 +56,7 @@ const (
 )
 
 func StartMenuItems() []string {
-	return []string{string(ChoiceBreeze), string(ChoiceTempest), string(ChoiceLighthouse), string(ChoiceQuit)}
+	return []string{string(ChoiceBreeze), string(ChoiceTempest), string(ChoiceLighthouse), string(ChoiceSettings), string(ChoiceQuit)}
 }
 
 func ChooseTier(width int) LogoTier {

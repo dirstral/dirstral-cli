@@ -125,6 +125,7 @@ func (m *appModel) updateDynamicItems(msg lighthouseStatusMsg) {
 		if msg.Health.Alive {
 			items = []MenuItem{
 				{Label: lighthouseActionStatus, Description: "Check process and endpoint health", Value: lighthouseActionStatus},
+				{Label: lighthouseActionLogs, Description: "Tail dir2mcp output", Value: lighthouseActionLogs},
 				{Label: lighthouseActionStop, Description: "Terminate managed dir2mcp", Value: lighthouseActionStop},
 				{Label: lighthouseActionBack, Description: "Return to main menu", Value: lighthouseActionBack},
 			}
