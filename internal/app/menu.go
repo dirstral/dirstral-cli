@@ -21,12 +21,12 @@ const CompactLogoText = "DIRSTRAL"
 var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 var fullLogoLines = []string{
-	"    ▄████████▄                    ██████╗ ██╗██████╗ ███████╗████████╗██████╗  █████╗ ██╗",
-	"    █████████████████████████▄    ██╔══██╗██║██╔══██╗██╔════╝╚══██╔══╝██╔══██╗██╔══██╗██║",
-	"    ██████████████████████████    ██║  ██║██║██████╔╝███████╗   ██║   ██████╔╝███████║██║",
-	"    ██████████████████████████    ██║  ██║██║██╔══██╗╚════██║   ██║   ██╔══██╗██╔══██║██║",
-	"    ██████████████████████████    ██████╔╝██║██║  ██║███████║   ██║   ██║  ██║██║  ██║███████╗",
-	"    ▀████████████████████████▀    ╚═════╝ ╚═╝╚═╝  ╚═╝╚══════╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝",
+	"    ▄████████▄          ██████╗ ██╗██████╗ ███████╗████████╗██████╗  █████╗ ██╗",
+	"    ███████████████▄    ██╔══██╗██║██╔══██╗██╔════╝╚══██╔══╝██╔══██╗██╔══██╗██║",
+	"    ████████████████    ██║  ██║██║██████╔╝███████╗   ██║   ██████╔╝███████║██║",
+	"    ████████████████    ██║  ██║██║██╔══██╗╚════██║   ██║   ██╔══██╗██╔══██║██║",
+	"    ████████████████    ██████╔╝██║██║  ██║███████║   ██║   ██║  ██║██║  ██║███████╗",
+	"    ▀██████████████▀    ╚═════╝ ╚═╝╚═╝  ╚═╝╚══════╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝",
 }
 
 var mediumLogoLines = []string{
@@ -84,7 +84,6 @@ func maxVisibleWidth(lines []string) int {
 func RenderLogo(width int) string {
 	tier := ChooseTier(width)
 
-	textWidths := []int{55, 55, 55, 55, 60, 60}
 	logoTints := []string{colorTint1, colorTint2, colorTint3, colorTint4, colorTint5, colorTint6}
 
 	switch tier {
@@ -93,36 +92,16 @@ func RenderLogo(width int) string {
 	case LogoMedium:
 		styled := make([]string, 0, len(mediumLogoLines))
 		for i, line := range mediumLogoLines {
-			runes := []rune(line)
-			w := textWidths[i]
-			splitIdx := len(runes) - w
-			if splitIdx < 0 {
-				splitIdx = 0
-			}
-			folderPart := string(runes[:splitIdx])
-			textPart := string(runes[splitIdx:])
-
 			tint := logoTints[i%len(logoTints)]
-			styledLine := paint(folderPart, tint) + paint(textPart, colorBrandStrong)
-			styled = append(styled, styledLine)
+			styled = append(styled, paint(line, tint))
 		}
 		return strings.Join(centerBlockLines(styled, width), "\n")
 	default:
 		lines := NormalizeLeftSpacing(fullLogoLines)
 		styled := make([]string, 0, len(lines))
 		for i, line := range lines {
-			runes := []rune(line)
-			w := textWidths[i]
-			splitIdx := len(runes) - w
-			if splitIdx < 0 {
-				splitIdx = 0
-			}
-			folderPart := string(runes[:splitIdx])
-			textPart := string(runes[splitIdx:])
-
 			tint := logoTints[i%len(logoTints)]
-			styledLine := paint(folderPart, tint) + paint(textPart, colorBrandStrong)
-			styled = append(styled, styledLine)
+			styled = append(styled, paint(line, tint))
 		}
 		return strings.Join(centerBlockLines(styled, width), "\n")
 	}

@@ -48,7 +48,7 @@ func TestRenderLogoThreeTiers(t *testing.T) {
 	if !strings.Contains(full, "▄████████▄") {
 		t.Fatalf("expected folder tab glyph in full logo")
 	}
-	if !strings.Contains(full, "▀████████████████████████▀") {
+	if !strings.Contains(full, "▀██████████████▀") {
 		t.Fatalf("expected folder bottom edge in full logo")
 	}
 }
