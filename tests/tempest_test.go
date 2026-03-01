@@ -20,8 +20,8 @@ func TestTempestRunFailsFastWithoutAudioPrereqs(t *testing.T) {
 	if !strings.Contains(msg, "tempest requires") {
 		t.Fatalf("unexpected tempest preflight error: %v", err)
 	}
-	// Verify the consolidated error lists missing dependencies
-	if !strings.Contains(msg, "ffmpeg") && !strings.Contains(msg, "elevenlabs_api_key") {
-		t.Fatalf("preflight error should mention missing dependencies: %v", err)
+	// ELEVENLABS_API_KEY is explicitly unset, so the error must always mention it.
+	if !strings.Contains(msg, "elevenlabs_api_key") {
+		t.Fatalf("preflight error should mention missing ELEVENLABS_API_KEY: %v", err)
 	}
 }
