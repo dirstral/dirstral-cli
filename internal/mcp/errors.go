@@ -2,16 +2,21 @@ package mcp
 
 import (
 	"errors"
+	"fmt"
 	"strings"
+
+	"github.com/dirstral/dirstral-cli/internal/protocol"
+	"github.com/dirstral/dirstral-cli/internal/x402"
 )
 
 const (
-	CanonicalCodeUnauthorized     = "UNAUTHORIZED"
-	CanonicalCodeSessionNotFound  = "SESSION_NOT_FOUND"
-	CanonicalCodeIndexNotReady    = "INDEX_NOT_READY"
-	CanonicalCodeFileNotFound     = "FILE_NOT_FOUND"
-	CanonicalCodePermissionDenied = "PERMISSION_DENIED"
-	CanonicalCodeRateLimited      = "RATE_LIMITED"
+	CanonicalCodeUnauthorized     = protocol.ErrorCodeUnauthorized
+	CanonicalCodeSessionNotFound  = protocol.ErrorCodeSessionNotFound
+	CanonicalCodeIndexNotReady    = protocol.ErrorCodeIndexNotReady
+	CanonicalCodeFileNotFound     = protocol.ErrorCodeFileNotFound
+	CanonicalCodePermissionDenied = protocol.ErrorCodePermissionDenied
+	CanonicalCodeRateLimited      = protocol.ErrorCodeRateLimited
+	CanonicalCodePaymentRequired  = x402.CodePaymentRequired
 )
 
 // CanonicalCodeFromError extracts a backend canonical code when present.
@@ -22,6 +27,9 @@ func CanonicalCodeFromError(err error) string {
 
 	var rpcErr *jsonRPCError
 	if errors.As(err, &rpcErr) {
+		if rpcErr.isPaymentRequired() {
+			return CanonicalCodePaymentRequired
+		}
 		if code := canonicalCodeFromText(rpcErr.Message); code != "" {
 			return code
 		}
@@ -45,6 +53,8 @@ func ActionableMessageForCode(code string) string {
 		return "Permission denied for this operation. Check server auth/scope and retry."
 	case CanonicalCodeRateLimited:
 		return "Request rate limit reached. Wait briefly and retry."
+	case CanonicalCodePaymentRequired:
+		return "This tool requires payment. Run with x402 enabled or configure a payment token."
 	default:
 		return ""
 	}
@@ -52,30 +62,55 @@ func ActionableMessageForCode(code string) string {
 
 // ActionableMessageFromError derives canonical code and returns user guidance.
 func ActionableMessageFromError(err error) string {
-	return ActionableMessageForCode(CanonicalCodeFromError(err))
+	msg := ActionableMessageForCode(CanonicalCodeFromError(err))
+	if msg == "" {
+		return ""
+	}
+
+	var rpcErr *jsonRPCError
+	if errors.As(err, &rpcErr) && rpcErr.isPaymentRequired() {
+		if rpcErr.PaymentRequiredHeader != nil && len(rpcErr.PaymentRequiredHeader.Accept) > 0 {
+			acc := rpcErr.PaymentRequiredHeader.Accept[0]
+			var hints []string
+			if acc.Amount != "" {
+				hints = append(hints, "amount="+acc.Amount)
+			}
+			if acc.Asset != "" {
+				hints = append(hints, "asset="+acc.Asset)
+			}
+			if acc.Network != "" {
+				hints = append(hints, "network="+acc.Network)
+			}
+			if len(hints) > 0 {
+				msg += fmt.Sprintf(" (Hints: %s)", strings.Join(hints, ", "))
+			}
+		}
+	}
+
+	return msg
 }
 
 func canonicalCodeFromText(text string) string {
 	upper := strings.ToUpper(text)
 
-	if strings.Contains(upper, CanonicalCodeUnauthorized) || strings.Contains(upper, "UNAUTHENTICATED") {
+	if containsCanonicalPhrase(upper, CanonicalCodeUnauthorized) || containsCanonicalPhrase(upper, "UNAUTHENTICATED") {
 		return CanonicalCodeUnauthorized
 	}
-	if strings.Contains(upper, CanonicalCodeSessionNotFound) || strings.Contains(upper, "SESSION NOT FOUND") {
+	if containsCanonicalPhrase(upper, CanonicalCodeSessionNotFound) || containsCanonicalPhrase(upper, "SESSION NOT FOUND") {
 		return CanonicalCodeSessionNotFound
 	}
-	if strings.Contains(upper, CanonicalCodeIndexNotReady) || strings.Contains(upper, "INDEX NOT READY") {
+	if containsCanonicalPhrase(upper, CanonicalCodeIndexNotReady) || containsCanonicalPhrase(upper, "INDEX NOT READY") {
 		return CanonicalCodeIndexNotReady
 	}
-	if strings.Contains(upper, CanonicalCodeFileNotFound) || strings.Contains(upper, "FILE NOT FOUND") {
+	if containsCanonicalPhrase(upper, CanonicalCodeFileNotFound) || containsCanonicalPhrase(upper, "FILE NOT FOUND") {
 		return CanonicalCodeFileNotFound
 	}
 	if containsAny(upper,
 		CanonicalCodePermissionDenied,
 		"PERMISSION DENIED",
-		"PERMISSION",
-		"DENIED",
+		"ACCESS DENIED",
 		"FORBIDDEN",
+		"NOT AUTHORIZED",
 	) {
 		return CanonicalCodePermissionDenied
 	}
@@ -84,14 +119,25 @@ func canonicalCodeFromText(text string) string {
 		"RATE LIMIT",
 		"RATE-LIMIT",
 		"RATE_LIMIT",
+		"RATE LIMITED",
+		"RATE_LIMITED",
 		"RATE LIMIT EXCEEDED",
-		"LIMIT EXCEEDED",
-		"QUOTA",
-		"THROTTLE",
-		"THROTTLED",
 		"TOO MANY REQUESTS",
 	) {
 		return CanonicalCodeRateLimited
+	}
+	if containsAnyWithContext(upper,
+		[]string{"QUOTA", "LIMIT EXCEEDED", "THROTTLE", "THROTTLED"},
+		[]string{"REQUEST", "API", "RATE", "HTTP", "CALL"},
+	) {
+		return CanonicalCodeRateLimited
+	}
+	if containsAny(upper,
+		CanonicalCodePaymentRequired,
+		"PAYMENT REQUIRED",
+		"PAYMENT-REQUIRED",
+	) {
+		return CanonicalCodePaymentRequired
 	}
 
 	return ""
@@ -99,9 +145,57 @@ func canonicalCodeFromText(text string) string {
 
 func containsAny(value string, patterns ...string) bool {
 	for _, pattern := range patterns {
-		if strings.Contains(value, pattern) {
+		if containsCanonicalPhrase(value, pattern) {
 			return true
 		}
 	}
 	return false
+}
+
+func containsAnyWithContext(value string, patterns []string, contextWords []string) bool {
+	if len(patterns) == 0 || len(contextWords) == 0 {
+		return false
+	}
+	hasContext := false
+	for _, contextWord := range contextWords {
+		if containsCanonicalPhrase(value, contextWord) {
+			hasContext = true
+			break
+		}
+	}
+	if !hasContext {
+		return false
+	}
+	return containsAny(value, patterns...)
+}
+
+func containsCanonicalPhrase(value, phrase string) bool {
+	valueTokens := canonicalTokens(value)
+	phraseTokens := canonicalTokens(phrase)
+	if len(phraseTokens) == 0 || len(valueTokens) < len(phraseTokens) {
+		return false
+	}
+	for i := 0; i <= len(valueTokens)-len(phraseTokens); i++ {
+		matched := true
+		for j := range phraseTokens {
+			if valueTokens[i+j] != phraseTokens[j] {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
+}
+
+func canonicalTokens(value string) []string {
+	normalized := strings.NewReplacer("_", " ", "-", " ").Replace(strings.ToUpper(strings.TrimSpace(value)))
+	if normalized == "" {
+		return nil
+	}
+	return strings.FieldsFunc(normalized, func(r rune) bool {
+		return (r < 'A' || r > 'Z') && (r < '0' || r > '9')
+	})
 }

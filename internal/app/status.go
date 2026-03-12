@@ -3,27 +3,27 @@ package app
 import (
 	"time"
 
-	"github.com/alibilge/dirstral-cli/internal/host"
+	"github.com/dirstral/dirstral-cli/internal/host"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
 const statusPollInterval = 3 * time.Second
 
-// lighthouseStatusMsg carries the latest health check result.
-type lighthouseStatusMsg struct {
+// serverStatusMsg carries the latest health check result.
+type serverStatusMsg struct {
 	Health host.HealthInfo
 }
 
-// pollLighthouseStatus returns a tea.Cmd that checks lighthouse health and
-// sends the result as a lighthouseStatusMsg.
-func pollLighthouseStatus() tea.Msg {
-	return lighthouseStatusMsg{Health: host.CheckHealth()}
+// pollServerStatus returns a tea.Msg that checks server health and
+// sends the result as a serverStatusMsg.
+func pollServerStatus() tea.Msg {
+	return serverStatusMsg{Health: host.CheckHealth()}
 }
 
-// tickLighthouseStatus returns a tea.Cmd that waits for the poll interval
+// tickServerStatus returns a tea.Cmd that waits for the poll interval
 // then triggers another health check.
-func tickLighthouseStatus() tea.Cmd {
+func tickServerStatus() tea.Cmd {
 	return tea.Tick(statusPollInterval, func(t time.Time) tea.Msg {
-		return lighthouseStatusMsg{Health: host.CheckHealth()}
+		return serverStatusMsg{Health: host.CheckHealth()}
 	})
 }

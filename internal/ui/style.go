@@ -4,13 +4,14 @@ package ui
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 )
 
 // Color palette (256-color).
 var (
-	ClrBrand  = lipgloss.Color("214") // orange
+	ClrBrand  = lipgloss.Color("208") // orange (#ff8700 — closest 256-color to SVG brand #F2911A)
 	ClrMuted  = lipgloss.Color("245") // gray
 	ClrSubtle = lipgloss.Color("242") // darker gray
 	ClrGreen  = lipgloss.Color("114") // green
@@ -32,7 +33,7 @@ var (
 	Keyword = lipgloss.NewStyle().Foreground(ClrBrand)
 )
 
-// Prompt renders a mode prompt like "breeze> " with color.
+// Prompt renders a mode prompt like "chat> " with color.
 func Prompt(mode string) string {
 	return Brand.Render(mode+">") + " "
 }
@@ -69,5 +70,8 @@ func Dim(text string) string {
 
 // Enabled reports whether color output is enabled.
 func Enabled() bool {
-	return os.Getenv("NO_COLOR") == ""
+	if os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	return strings.ToLower(strings.TrimSpace(os.Getenv("TERM"))) != "dumb"
 }

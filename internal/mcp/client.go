@@ -13,15 +13,19 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/dirstral/dirstral-cli/internal/protocol"
+	"github.com/dirstral/dirstral-cli/internal/x402"
 )
 
-const protocolVersion = "2025-11-25"
+const protocolVersion = protocol.DefaultProtocolVersion
 
 type Client struct {
 	endpoint   string
 	transport  string
 	verbose    bool
 	authToken  string
+	mu         sync.Mutex
 	sessionID  string
 	httpClient *http.Client
 	stdio      *stdioClient
@@ -33,6 +37,7 @@ type stdioClient struct {
 	stdin  io.WriteCloser
 	stdout *bufio.Reader
 	mu     sync.Mutex
+	callMu sync.Mutex
 }
 
 type Tool struct {
@@ -74,15 +79,33 @@ type jsonRPCResponse struct {
 }
 
 type jsonRPCError struct {
-	Code    int
-	Message string
+	Code                   int
+	Message                string
+	HTTPStatus             int
+	Headers                map[string]string
+	PaymentRequiredHeader  *x402.X402Payload
+	PaymentResponseHeader  string
+	PaymentRequiredPresent bool
 }
 
 func (e *jsonRPCError) Error() string {
 	if e == nil {
 		return ""
 	}
-	return fmt.Sprintf("json-rpc error %d: %s", e.Code, e.Message)
+	if e.HTTPStatus <= 0 {
+		return fmt.Sprintf("json-rpc error %d: %s", e.Code, e.Message)
+	}
+	return fmt.Sprintf("json-rpc error %d: %s (http %d)", e.Code, e.Message, e.HTTPStatus)
+}
+
+func (e *jsonRPCError) isPaymentRequired() bool {
+	if e == nil {
+		return false
+	}
+	if e.HTTPStatus == http.StatusPaymentRequired {
+		return true
+	}
+	return e.PaymentRequiredPresent || e.PaymentRequiredHeader != nil || strings.TrimSpace(e.PaymentResponseHeader) != ""
 }
 
 func New(endpoint string, verbose bool) *Client {
@@ -136,7 +159,7 @@ func (c *Client) Initialize(ctx context.Context) error {
 		"capabilities":    map[string]any{"tools": map[string]any{}},
 		"clientInfo":      map[string]any{"name": "dirstral", "version": "0.1.0"},
 	}
-	body, status, headers, err := c.call(ctx, "initialize", params, true)
+	_, status, headers, err := c.call(ctx, protocol.RPCMethodInitialize, params, true)
 	if err != nil {
 		return err
 	}
@@ -144,26 +167,37 @@ func (c *Client) Initialize(ctx context.Context) error {
 		return fmt.Errorf("initialize failed with http status %d", status)
 	}
 	if c.transport == "streamable-http" {
-		sessionID := headers.Get("MCP-Session-Id")
+		sessionID := headers.Get(protocol.MCPSessionHeader)
 		if sessionID == "" {
-			return fmt.Errorf("initialize response missing MCP-Session-Id")
+			return fmt.Errorf("initialize response missing %s", protocol.MCPSessionHeader)
 		}
+		c.mu.Lock()
 		c.sessionID = sessionID
+		c.mu.Unlock()
 	} else {
+		c.mu.Lock()
 		c.sessionID = "stdio"
+		c.mu.Unlock()
 	}
 
-	_ = body
-	_, _, _, _ = c.call(ctx, "notifications/initialized", map[string]any{}, false)
+	_, notifyStatus, _, notifyErr := c.call(ctx, protocol.RPCMethodNotificationsInitialized, map[string]any{}, false)
+	if notifyErr != nil {
+		return fmt.Errorf("notifications/initialized failed: %w", notifyErr)
+	}
+	if notifyStatus != http.StatusAccepted && (notifyStatus < 200 || notifyStatus >= 300) {
+		return fmt.Errorf("notifications/initialized returned status %d", notifyStatus)
+	}
 	return nil
 }
 
 func (c *Client) SessionID() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.sessionID
 }
 
 func (c *Client) ListTools(ctx context.Context) ([]Tool, error) {
-	body, _, _, err := c.call(ctx, "tools/list", map[string]any{}, true)
+	body, _, _, err := c.call(ctx, protocol.RPCMethodToolsList, map[string]any{}, true)
 	if err != nil {
 		return nil, err
 	}
@@ -197,7 +231,7 @@ func (c *Client) CallTool(ctx context.Context, name string, args map[string]any)
 		"arguments": args,
 	}
 	start := time.Now()
-	body, status, headers, err := c.call(ctx, "tools/call", params, true)
+	body, status, headers, err := c.call(ctx, protocol.RPCMethodToolsCall, params, true)
 	if err != nil && c.transport == "streamable-http" && isSessionNotFoundError(err) {
 		if c.verbose {
 			fmt.Println("[mcp] SESSION_NOT_FOUND received; recovering session and retrying tools/call once")
@@ -211,7 +245,7 @@ func (c *Client) CallTool(ctx context.Context, name string, args map[string]any)
 		if c.verbose {
 			fmt.Println("[mcp] session recovery succeeded; retrying tools/call")
 		}
-		body, status, headers, err = c.call(ctx, "tools/call", params, true)
+		body, status, headers, err = c.call(ctx, protocol.RPCMethodToolsCall, params, true)
 		if err != nil && c.verbose {
 			fmt.Printf("[mcp] tools/call retry failed: %v\n", err)
 		}
@@ -253,10 +287,14 @@ func (c *Client) recoverStreamableHTTPSession(ctx context.Context) error {
 	if c.verbose {
 		fmt.Println("[mcp] recovering streamable-http MCP session")
 	}
+	c.mu.Lock()
 	previousSessionID := c.sessionID
 	c.sessionID = ""
+	c.mu.Unlock()
 	if err := c.Initialize(ctx); err != nil {
+		c.mu.Lock()
 		c.sessionID = previousSessionID
+		c.mu.Unlock()
 		return err
 	}
 	return nil
@@ -267,7 +305,7 @@ func isSessionNotFoundError(err error) bool {
 		return false
 	}
 	code := CanonicalCodeFromError(err)
-	return code == CanonicalCodeSessionNotFound
+	return code == protocol.ErrorCodeSessionNotFound
 }
 
 func (c *Client) call(ctx context.Context, method string, params map[string]any, withID bool) (map[string]any, int, http.Header, error) {
@@ -280,8 +318,10 @@ func (c *Client) call(ctx context.Context, method string, params map[string]any,
 
 	var id *int
 	if withID {
+		c.mu.Lock()
 		n := c.nextID
 		c.nextID++
+		c.mu.Unlock()
 		id = &n
 	}
 	message := jsonRPCRequest{JSONRPC: "2.0", ID: id, Method: method, Params: params}
@@ -299,13 +339,16 @@ func (c *Client) call(ctx context.Context, method string, params map[string]any,
 		return nil, 0, nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("MCP-Protocol-Version", protocolVersion)
+	req.Header.Set(protocol.MCPProtocolVersionHeader, protocolVersion)
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	if c.authToken != "" {
 		req.Header.Set("Authorization", "Bearer "+c.authToken)
 	}
-	if c.sessionID != "" {
-		req.Header.Set("MCP-Session-Id", c.sessionID)
+	c.mu.Lock()
+	sessionID := c.sessionID
+	c.mu.Unlock()
+	if sessionID != "" {
+		req.Header.Set(protocol.MCPSessionHeader, sessionID)
 	}
 
 	resp, err := c.httpClient.Do(req)
@@ -319,6 +362,39 @@ func (c *Client) call(ctx context.Context, method string, params map[string]any,
 	if err != nil {
 		return nil, resp.StatusCode, resp.Header, err
 	}
+
+	prVal := headerValueIgnoreCase(resp.Header, x402.HeaderPaymentRequired)
+	prRespVal := headerValueIgnoreCase(resp.Header, x402.HeaderPaymentResponse)
+	var prHeader *x402.X402Payload
+	if prVal != "" {
+		var parsed x402.X402Payload
+		if err := json.Unmarshal([]byte(prVal), &parsed); err == nil {
+			prHeader = &parsed
+		}
+	}
+
+	if resp.StatusCode == http.StatusPaymentRequired {
+		code := -32000 // generic error
+		message := "payment required"
+		var envelope jsonRPCResponse
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, &envelope); err == nil && envelope.Error != nil {
+				code = envelope.Error.Code
+				message = envelope.Error.Message
+			}
+		}
+
+		return nil, resp.StatusCode, resp.Header, &jsonRPCError{
+			Code:                   code,
+			Message:                message,
+			HTTPStatus:             resp.StatusCode,
+			Headers:                flattenHeaders(resp.Header),
+			PaymentRequiredHeader:  prHeader,
+			PaymentResponseHeader:  prRespVal,
+			PaymentRequiredPresent: prVal != "",
+		}
+	}
+
 	if len(bodyBytes) == 0 {
 		return map[string]any{}, resp.StatusCode, resp.Header, nil
 	}
@@ -335,7 +411,15 @@ func (c *Client) call(ctx context.Context, method string, params map[string]any,
 		return nil, resp.StatusCode, resp.Header, err
 	}
 	if envelope.Error != nil {
-		return nil, resp.StatusCode, resp.Header, &jsonRPCError{Code: envelope.Error.Code, Message: envelope.Error.Message}
+		return nil, resp.StatusCode, resp.Header, &jsonRPCError{
+			Code:                   envelope.Error.Code,
+			Message:                envelope.Error.Message,
+			HTTPStatus:             resp.StatusCode,
+			Headers:                flattenHeaders(resp.Header),
+			PaymentRequiredHeader:  prHeader,
+			PaymentResponseHeader:  prRespVal,
+			PaymentRequiredPresent: prVal != "",
+		}
 	}
 	var raw map[string]any
 	if err := json.Unmarshal(bodyBytes, &raw); err != nil {
@@ -382,11 +466,15 @@ func (c *Client) callStdio(ctx context.Context, method string, params map[string
 			return nil, 0, nil, err
 		}
 	}
+	c.stdio.callMu.Lock()
+	defer c.stdio.callMu.Unlock()
 
 	var id *int
 	if withID {
+		c.mu.Lock()
 		n := c.nextID
 		c.nextID++
+		c.mu.Unlock()
 		id = &n
 	}
 	message := jsonRPCRequest{JSONRPC: "2.0", ID: id, Method: method, Params: params}
@@ -396,16 +484,45 @@ func (c *Client) callStdio(ctx context.Context, method string, params map[string
 	}
 
 	c.stdio.mu.Lock()
-	defer c.stdio.mu.Unlock()
 	if err := writeStdioMessage(c.stdio.stdin, payload); err != nil {
+		c.stdio.mu.Unlock()
 		return nil, 0, nil, err
 	}
 	if !withID {
+		c.stdio.mu.Unlock()
 		return map[string]any{}, http.StatusAccepted, http.Header{}, nil
 	}
-	bodyBytes, err := readStdioMessage(c.stdio.stdout)
-	if err != nil {
-		return nil, 0, nil, err
+	stdout := c.stdio.stdout
+	c.stdio.mu.Unlock()
+
+	type stdioReadResult struct {
+		body []byte
+		err  error
+	}
+	readResultCh := make(chan stdioReadResult, 1)
+	go func() {
+		body, readErr := readStdioMessage(stdout)
+		readResultCh <- stdioReadResult{body: body, err: readErr}
+	}()
+
+	var bodyBytes []byte
+	select {
+	case <-ctx.Done():
+		if c.stdio != nil && c.stdio.cmd != nil && c.stdio.cmd.Process != nil {
+			_ = c.stdio.cmd.Process.Kill()
+		}
+		<-readResultCh
+		_ = c.Close()
+		return nil, 0, nil, ctx.Err()
+	case readResult := <-readResultCh:
+		if readResult.err != nil {
+			return nil, 0, nil, readResult.err
+		}
+		bodyBytes = readResult.body
+	}
+
+	if len(bodyBytes) == 0 {
+		return nil, 0, nil, fmt.Errorf("empty stdio response")
 	}
 
 	var envelope jsonRPCResponse
@@ -468,6 +585,18 @@ func flattenHeaders(h http.Header) map[string]string {
 		out[k] = strings.Join(v, ",")
 	}
 	return out
+}
+
+func headerValueIgnoreCase(h http.Header, name string) string {
+	if value := strings.TrimSpace(h.Get(name)); value != "" {
+		return value
+	}
+	for key, values := range h {
+		if strings.EqualFold(key, name) {
+			return strings.TrimSpace(strings.Join(values, ","))
+		}
+	}
+	return ""
 }
 
 func asString(v any) string {

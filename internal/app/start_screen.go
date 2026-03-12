@@ -1,10 +1,11 @@
 package app
 
 var startupTips = []string{
-	"Tip: Lighthouse first is the fastest demo path.",
+	"Tip: Start/Stop MCP Server first is the fastest demo path.",
+	"Tip: Set DIRSTRAL_MCP_URL to target a remote MCP endpoint.",
 	"Tip: Press q any time to return or quit.",
 	"Tip: Use j/k if arrow keys are awkward in your terminal.",
-	"Tip: Breeze is best for quick tool-driven lookups.",
+	"Tip: Chat is best for quick tool-driven lookups.",
 }
 
 // StartupTips returns startup hints shown on the home screen.
@@ -28,19 +29,14 @@ func StartupTip(index int) string {
 // StartMenuConfig returns the menu configuration for the start screen.
 func StartMenuConfig() MenuConfig {
 	return MenuConfig{
-		Title: "Welcome to Dirstral",
-		Intro: []string{
-			"Launch mode: Breeze (chat), Tempest (voice), Lighthouse (host MCP)",
-			StartupTip(0),
-		},
 		Items: []MenuItem{
-			{Label: string(ChoiceBreeze), Description: "Interactive text chat with MCP tools", Value: string(ChoiceBreeze)},
-			{Label: string(ChoiceTempest), Description: "Voice-powered agent loop", Value: string(ChoiceTempest)},
-			{Label: string(ChoiceLighthouse), Description: "Host and monitor dir2mcp server", Value: string(ChoiceLighthouse)},
-			{Label: string(ChoiceSettings), Description: "Edit config and API settings", Value: string(ChoiceSettings)},
-			{Label: "Exit", Description: "Exit Dirstral", Value: string(ChoiceQuit)},
+			{Label: string(ChoiceChat), Description: "Text chat with MCP tools", Value: string(ChoiceChat)},
+			{Label: string(ChoiceVoice), Description: "Voice-powered agent loop", Value: string(ChoiceVoice)},
+			{Label: "MCP Server", Description: "Manage local server and probe remote MCP", Value: string(ChoiceServer)},
+			{Label: string(ChoiceSettings), Description: "Configure dirstral", Value: string(ChoiceSettings)},
+			{Label: string(ChoiceQuit), Description: "Quit", Value: string(ChoiceQuit)},
 		},
 		ShowLogo: true,
-		Controls: "up/down or j/k move · enter select · esc/q quit",
+		Controls: "↑↓ / j/k  move · enter  select · esc/q  quit",
 	}
 }

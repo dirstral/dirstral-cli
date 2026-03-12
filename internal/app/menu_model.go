@@ -44,7 +44,7 @@ type MenuModel struct {
 // NewMenuModel creates a MenuModel from a config.
 func NewMenuModel(cfg MenuConfig) MenuModel {
 	if cfg.Controls == "" {
-		cfg.Controls = "arrows navigate · enter select · q/esc back"
+		cfg.Controls = "↑↓ / j/k  move · enter  select · esc/q  back"
 	}
 	animate := animationsEnabled()
 	revealed := -1 // show all by default
@@ -191,11 +191,6 @@ func (m MenuModel) View() string {
 	if m.revealedCount >= 0 {
 		showCount = m.revealedCount
 	}
-	rowGap := 0
-	if !tinyHeight && !compactRows {
-		rowGap = 1
-	}
-
 	for i, item := range m.config.Items {
 		if i >= showCount {
 			break
@@ -203,36 +198,45 @@ func (m MenuModel) View() string {
 
 		isSelected := i == m.cursor
 
-		badgeStr := ""
+		badgePlain := ""
+		badgeStyled := ""
 		if item.Badge != "" {
-			badgeStr = " [" + item.Badge + "]"
+			badgePlain = " [" + item.Badge + "]"
+			badgeStyle := styleSubtle
+			if item.BadgeStyle != nil {
+				badgeStyle = *item.BadgeStyle
+			}
+			badgeStyled = " [" + badgeStyle.Render(item.Badge) + "]"
 		}
 
 		if compactRows || descWidth < 10 {
-			label := truncateText(item.Label+badgeStr, maxInt(contentWidth-6, 4))
+			label := truncateText(item.Label+badgePlain, maxInt(contentWidth-6, 4))
+			if badgeStyled != "" && !isSelected {
+				label = strings.Replace(label, badgePlain, badgeStyled, 1)
+			}
 			if isSelected {
-				menuLines = append(menuLines, fmt.Sprintf(" %s %s", styleSelected.Render(">"), styleSelectedRow.Render(" "+label+" ")))
+				menuLines = append(menuLines, fmt.Sprintf(" %s %s", styleSelected.Render("▸"), styleSelectedRow.Render(" "+label+" ")))
 			} else {
 				menuLines = append(menuLines, fmt.Sprintf("   %s", styleMuted.Render(label)))
 			}
 			continue
 		}
 
-		paddedLabel := fitText(item.Label+badgeStr, labelWidth)
+		paddedLabel := fitText(item.Label+badgePlain, labelWidth)
+		if badgeStyled != "" && !isSelected {
+			paddedLabel = strings.Replace(paddedLabel, badgePlain, badgeStyled, 1)
+		}
 		desc := fitText(item.Description, descWidth)
 		marker := styleMuted.Render(" ")
 		labelCell := styleMuted.Width(labelWidth).Render(paddedLabel)
 		descCell := styleDescription.Width(descWidth).Render(desc)
 		if isSelected {
-			marker = styleSelected.Render(">")
+			marker = styleSelected.Render("▸")
 			labelCell = styleSelectedRow.Width(labelWidth).Render(paddedLabel)
 			descCell = styleSelectedDesc.Width(descWidth).Render(desc)
 		}
 		row := fmt.Sprintf("  %s %s%s%s", marker, labelCell, strings.Repeat(" ", gutterWidth), descCell)
 		menuLines = append(menuLines, row)
-		if rowGap == 1 && i < showCount-1 {
-			menuLines = append(menuLines, "")
-		}
 	}
 	if len(menuLines) == 0 {
 		menuLines = append(menuLines, styleSubtle.Render("  (no options)"))
@@ -254,13 +258,15 @@ func (m MenuModel) View() string {
 			helpText = styleMuted.Render(truncateText("Keys: up/down or j/k move · enter choose · esc/q back · ? toggle help", contentWidth))
 		}
 		helpBox := menuStyle.MaxWidth(panelWidth).Render(helpText)
+		// Help is an overlay panel: replace menu content so keymap text stays visible
+		// even on shorter terminals where stacking panels would clip the footer area.
 		if tinyHeight {
-			body = joinVerticalNonEmpty(lipgloss.Left, body, helpBox)
+			body = joinVerticalNonEmpty(lipgloss.Left, header, helpBox)
 		} else {
-			body = joinVerticalNonEmpty(lipgloss.Center, body, helpBox)
+			body = joinVerticalNonEmpty(lipgloss.Center, header, helpBox)
 		}
 	}
-	content := composeWithPinnedFooter(body, footer, m.height)
+	content := joinVerticalNonEmpty(lipgloss.Left, body, footer)
 
 	if showLogo {
 		logo := RenderLogo(viewWidth)
@@ -269,7 +275,9 @@ func (m MenuModel) View() string {
 		b.WriteByte('\n')
 		b.WriteByte('\n')
 
-		contentLines := strings.Split(content, "\n")
+		// Trim trailing newlines before splitting to avoid phantom blank lines
+		// that inflate the block height and break vertical centering.
+		contentLines := strings.Split(strings.TrimRight(content, "\n"), "\n")
 		tier := ChooseTier(viewWidth)
 		if tier == LogoCompact {
 			for _, line := range contentLines {
@@ -282,17 +290,20 @@ func (m MenuModel) View() string {
 				b.WriteByte('\n')
 			}
 		}
-		return composeWithPinnedFooter(b.String(), "", m.height)
+		if m.height <= 0 {
+			return b.String()
+		}
+		// RenderLogo already centers lines horizontally via centerBlockLines,
+		// and the menu content lines above also go through centerBlockLines.
+		// Use Left placement so lipgloss.Place only adds vertical padding and
+		// does not shift the pre-centered content a second time.
+		return lipgloss.Place(viewWidth, m.height, lipgloss.Left, lipgloss.Center, strings.TrimRight(b.String(), "\n"))
 	}
 
 	if m.height <= 0 {
 		return content
 	}
-	vAlign := lipgloss.Center
-	if tinyHeight {
-		vAlign = lipgloss.Top
-	}
-	return lipgloss.Place(viewWidth, m.height, lipgloss.Center, vAlign, content)
+	return lipgloss.Place(viewWidth, m.height, lipgloss.Center, lipgloss.Center, content)
 }
 
 // menuHelpText renders the shared menu keymap panel with screen context.
@@ -314,29 +325,6 @@ func menuHelpText(width int, screenTitle string) string {
 	return lipgloss.NewStyle().MaxWidth(maxInt(width-2, 12)).Render(strings.Join(lines, "\n"))
 }
 
-func composeWithPinnedFooter(body, footer string, height int) string {
-	if height <= 0 {
-		return joinVerticalNonEmpty(lipgloss.Left, body, footer)
-	}
-	bodyLines := splitLines(body)
-	footerLines := splitLines(footer)
-	if len(footerLines) >= height {
-		return strings.Join(footerLines[:height], "\n")
-	}
-	bodyBudget := height - len(footerLines)
-	if bodyBudget < len(bodyLines) {
-		if bodyBudget <= 0 {
-			bodyLines = nil
-		} else {
-			bodyLines = bodyLines[:bodyBudget]
-		}
-	}
-	lines := make([]string, 0, len(bodyLines)+len(footerLines))
-	lines = append(lines, bodyLines...)
-	lines = append(lines, footerLines...)
-	return strings.Join(lines, "\n")
-}
-
 func joinVerticalNonEmpty(pos lipgloss.Position, items ...string) string {
 	nonEmpty := make([]string, 0, len(items))
 	for _, item := range items {
@@ -349,13 +337,6 @@ func joinVerticalNonEmpty(pos lipgloss.Position, items ...string) string {
 		return ""
 	}
 	return lipgloss.JoinVertical(pos, nonEmpty...)
-}
-
-func splitLines(s string) []string {
-	if s == "" {
-		return nil
-	}
-	return strings.Split(s, "\n")
 }
 
 func truncateText(s string, width int) string {

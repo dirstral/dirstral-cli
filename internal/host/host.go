@@ -21,8 +21,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/alibilge/dirstral-cli/internal/config"
-	"github.com/alibilge/dirstral-cli/internal/ui"
+	"github.com/dirstral/dirstral-cli/internal/buildinfo"
+	"github.com/dirstral/dirstral-cli/internal/config"
+	"github.com/dirstral/dirstral-cli/internal/protocol"
+	"github.com/dirstral/dirstral-cli/internal/ui"
 )
 
 type State struct {
@@ -42,7 +44,12 @@ type UpOptions struct {
 	JSON    bool
 }
 
-var errUnhealthy = errors.New("lighthouse not ready")
+var errUnhealthy = errors.New("mcp server not ready")
+
+const (
+	defaultEndpointCaptureTimeout      = 20 * time.Second
+	defaultEndpointCapturePollInterval = 150 * time.Millisecond
+)
 
 func Up(ctx context.Context, opts UpOptions) error {
 	baseCommand, baseArgs, workDir, err := resolveDir2MCPCommand()
@@ -69,9 +76,9 @@ func Up(ctx context.Context, opts UpOptions) error {
 		args = append(args, "--json")
 	}
 
-	effectiveListen := effectiveListen(opts.Listen, opts.Port)
+	effectiveListenStr := effectiveListen(opts.Listen, opts.Port)
 	effectivePath := normalizeMCPPath(opts.MCPPath)
-	derivedURL, deterministic := ComputeMCPURL(effectiveListen, effectivePath)
+	derivedURL, deterministic := ComputeMCPURL(effectiveListenStr, effectivePath)
 
 	cmd := exec.CommandContext(ctx, baseCommand, args...)
 	if workDir != "" {
@@ -100,7 +107,7 @@ func Up(ctx context.Context, opts UpOptions) error {
 		MCPURL:    derivedURL,
 	}
 	if err := SaveState(state); err != nil {
-		return err
+		return errors.Join(err, stopStartedCommand(cmd, stdout, stderr))
 	}
 
 	done := make(chan error, 1)
@@ -110,13 +117,13 @@ func Up(ctx context.Context, opts UpOptions) error {
 
 	stopCapture := make(chan struct{})
 	if !deterministic {
-		go captureEndpoint(stopCapture, state.PID, state.RootDir)
+		go captureEndpoint(stopCapture, state.PID, state.RootDir, defaultEndpointCaptureTimeout, defaultEndpointCapturePollInterval)
 	}
 
 	go streamLogs(stdout, "")
 	go streamLogs(stderr, "[dir2mcp] ")
 
-	fmt.Println(ui.Info("lighthouse:", fmt.Sprintf("started dir2mcp (pid=%d). Press Ctrl+C to stop.", cmd.Process.Pid)))
+	fmt.Println(ui.Info("mcp server:", fmt.Sprintf("started dir2mcp (pid=%d). Press Ctrl+C to stop.", cmd.Process.Pid)))
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
@@ -129,11 +136,11 @@ func Up(ctx context.Context, opts UpOptions) error {
 		if err != nil {
 			return fmt.Errorf("dir2mcp exited: %w", err)
 		}
-		fmt.Println(ui.Info("lighthouse:", "dir2mcp stopped"))
+		fmt.Println(ui.Info("mcp server:", "dir2mcp stopped"))
 		return nil
 	case <-sigCh:
 		close(stopCapture)
-		fmt.Println("\n" + ui.Info("lighthouse:", "shutting down dir2mcp..."))
+		fmt.Println("\n" + ui.Info("mcp server:", "shutting down dir2mcp..."))
 		if err := terminateProcess(cmd.Process.Pid); err != nil {
 			return err
 		}
@@ -143,14 +150,14 @@ func Up(ctx context.Context, opts UpOptions) error {
 			_ = cmd.Process.Kill()
 		}
 		_ = ClearState()
-		fmt.Println(ui.Info("lighthouse:", "stopped"))
+		fmt.Println(ui.Info("mcp server:", "stopped"))
 		return nil
 	}
 }
 
-// LogPath returns the path to the lighthouse log file.
+// LogPath returns the path to the MCP server log file.
 func LogPath() string {
-	return filepath.Join(os.TempDir(), "dirstral-lighthouse.log")
+	return filepath.Join(os.TempDir(), "dirstral-mcp-server.log")
 }
 
 // UpDetached starts dir2mcp as a managed background process and returns immediately.
@@ -179,16 +186,16 @@ func UpDetached(ctx context.Context, opts UpOptions) error {
 		args = append(args, "--json")
 	}
 
-	effectiveListen := effectiveListen(opts.Listen, opts.Port)
+	effectiveListenStr := effectiveListen(opts.Listen, opts.Port)
 	effectivePath := normalizeMCPPath(opts.MCPPath)
-	derivedURL, deterministic := ComputeMCPURL(effectiveListen, effectivePath)
+	derivedURL, deterministic := ComputeMCPURL(effectiveListenStr, effectivePath)
 
 	cmd := exec.CommandContext(ctx, baseCommand, args...)
 	if workDir != "" {
 		cmd.Dir = workDir
 	}
 
-	logFile, err := os.OpenFile(LogPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	logFile, err := os.OpenFile(LogPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
@@ -200,11 +207,6 @@ func UpDetached(ctx context.Context, opts UpOptions) error {
 		return err
 	}
 
-	go func() {
-		_ = cmd.Wait()
-		_ = logFile.Close()
-	}()
-
 	state := State{
 		PID:       cmd.Process.Pid,
 		StartedAt: time.Now().Format(time.RFC3339),
@@ -214,15 +216,25 @@ func UpDetached(ctx context.Context, opts UpOptions) error {
 		MCPURL:    derivedURL,
 	}
 	if err := SaveState(state); err != nil {
+		cleanupErr := stopStartedCommand(cmd)
+		_ = logFile.Close()
+		if cleanupErr != nil {
+			return errors.Join(err, cleanupErr)
+		}
 		return err
 	}
+
+	go func() {
+		_ = cmd.Wait()
+		_ = logFile.Close()
+	}()
 
 	if !deterministic {
 		// captureEndpoint exits when one of the following happens:
 		// - connection.json appears with a valid endpoint
 		// - the managed process exits
 		// - the capture timeout elapses (prevents long-lived goroutine leaks)
-		go captureEndpoint(make(chan struct{}), state.PID, state.RootDir)
+		go captureEndpoint(make(chan struct{}), state.PID, state.RootDir, defaultEndpointCaptureTimeout, defaultEndpointCapturePollInterval)
 	}
 
 	return nil
@@ -231,7 +243,7 @@ func UpDetached(ctx context.Context, opts UpOptions) error {
 func Status() error {
 	health := CheckHealth()
 	if !health.Found {
-		fmt.Println(ui.Dim("lighthouse: no managed dir2mcp process"))
+		fmt.Println(ui.Dim("mcp server: no managed dir2mcp process"))
 		return fmt.Errorf("%w: no managed process", errUnhealthy)
 	}
 
@@ -240,10 +252,11 @@ func Status() error {
 	if alive {
 		aliveStr = ui.Green.Render("true")
 	}
-	fmt.Printf("%s pid=%d alive=%s\n", ui.Brand.Render("lighthouse:"), health.PID, aliveStr)
+	fmt.Printf("%s pid=%d alive=%s\n", ui.Brand.Render("mcp server:"), health.PID, aliveStr)
 
-	if health.MCPURL == "" {
-		fmt.Printf("%s endpoint=%s reachable=%s mcp_ready=%s\n", ui.Brand.Render("lighthouse:"), ui.Dim("unknown"), ui.Red.Render("false"), ui.Red.Render("false"))
+	safeEndpoint := sanitizeEndpointForLog(health.MCPURL)
+	if safeEndpoint == "" {
+		fmt.Printf("%s endpoint=%s reachable=%s mcp_ready=%s\n", ui.Brand.Render("mcp server:"), ui.Dim("unknown"), ui.Red.Render("false"), ui.Red.Render("false"))
 		return fmt.Errorf("%w: endpoint unknown", errUnhealthy)
 	}
 
@@ -255,42 +268,144 @@ func Status() error {
 	if health.MCPReady {
 		readyStr = ui.Green.Render("true")
 	}
-	fmt.Printf("%s endpoint=%s reachable=%s mcp_ready=%s\n", ui.Brand.Render("lighthouse:"), ui.Cyan.Render(health.MCPURL), reachStr, readyStr)
-	fmt.Printf("%s protocol=%s session_header=%s\n", ui.Brand.Render("lighthouse:"), ui.Cyan.Render(OrUnknown(health.ProtocolHeader)), ui.Cyan.Render(OrUnknown(health.SessionHeaderName)))
-	fmt.Printf("%s auth_source=%s\n", ui.Brand.Render("lighthouse:"), ui.Cyan.Render(OrUnknown(health.AuthSourceType)))
+	fmt.Printf("%s endpoint=%s reachable=%s mcp_ready=%s\n", ui.Brand.Render("mcp server:"), ui.Cyan.Render(safeEndpoint), reachStr, readyStr)
+	fmt.Printf("%s protocol=%s session_header=%s\n", ui.Brand.Render("mcp server:"), ui.Cyan.Render(OrUnknown(health.ProtocolHeader)), ui.Cyan.Render(OrUnknown(health.SessionHeaderName)))
+	fmt.Printf("%s auth_source=%s\n", ui.Brand.Render("mcp server:"), ui.Cyan.Render(OrUnknown(health.AuthSourceType)))
+	if health.AuthDiagnostic != "" {
+		fmt.Printf("%s auth_diagnostic=%s\n", ui.Brand.Render("mcp server:"), ui.Yellow.Render(health.AuthDiagnostic))
+	}
 	if health.LastError != "" {
-		fmt.Printf("%s detail=%s\n", ui.Brand.Render("lighthouse:"), ui.Dim(health.LastError))
+		fmt.Printf("%s detail=%s\n", ui.Brand.Render("mcp server:"), ui.Dim(health.LastError))
 	}
 
 	if !health.Ready {
 		if health.LastError != "" {
 			return fmt.Errorf("%w: %s", errUnhealthy, health.LastError)
 		}
+		if health.AuthDiagnostic != "" {
+			return fmt.Errorf("%w: %s", errUnhealthy, health.AuthDiagnostic)
+		}
 		return fmt.Errorf("%w", errUnhealthy)
 	}
 	return nil
+}
+
+func StatusRemote(ctx context.Context, endpoint string) error {
+	endpoint = strings.TrimSpace(endpoint)
+	if endpoint == "" {
+		return fmt.Errorf("%w: remote endpoint is empty", errUnhealthy)
+	}
+	safeEndpoint := sanitizeEndpointForLog(endpoint)
+
+	token := strings.TrimSpace(os.Getenv("DIR2MCP_AUTH_TOKEN"))
+	reachable := endpointReachable(endpoint)
+	mcpReady := false
+	lastErr := ""
+	if reachable {
+		mcpReady, lastErr = probeMCPReady(ctx, endpoint, token)
+	} else {
+		lastErr = "endpoint not reachable"
+	}
+
+	reachStr := ui.Red.Render("false")
+	if reachable {
+		reachStr = ui.Green.Render("true")
+	}
+	readyStr := ui.Red.Render("false")
+	if mcpReady {
+		readyStr = ui.Green.Render("true")
+	}
+	fmt.Printf("%s endpoint=%s reachable=%s mcp_ready=%s\n", ui.Brand.Render("mcp server(remote):"), ui.Cyan.Render(safeEndpoint), reachStr, readyStr)
+	if lastErr != "" {
+		fmt.Printf("%s detail=%s\n", ui.Brand.Render("mcp server(remote):"), ui.Dim(lastErr))
+	}
+	if !mcpReady && isAuthRelatedError(lastErr) {
+		if token == "" {
+			fmt.Printf("%s DIR2MCP_AUTH_TOKEN is not set\n", ui.Yellow.Render("hint:"))
+		}
+		fmt.Printf("%s export DIR2MCP_AUTH_TOKEN=<token>\n", ui.Dim("      "))
+		tokenFilePath := resolveTokenFilePath(endpoint)
+		if tokenFilePath != "" {
+			fmt.Printf("%s export DIR2MCP_AUTH_TOKEN=$(cat %s)\n", ui.Dim("      "), tokenFilePath)
+		} else {
+			fmt.Printf("%s if using secret.token: export DIR2MCP_AUTH_TOKEN=$(cat /path/to/dir/.dir2mcp/secret.token)\n", ui.Dim("      "))
+		}
+	}
+
+	if !reachable || !mcpReady {
+		if lastErr != "" {
+			return fmt.Errorf("%w: %s", errUnhealthy, lastErr)
+		}
+		return fmt.Errorf("%w", errUnhealthy)
+	}
+	return nil
+}
+
+// resolveTokenFilePath returns the actual path to secret.token for the given
+// endpoint by checking the local state file. Returns "" if unavailable.
+func resolveTokenFilePath(endpoint string) string {
+	state, err := LoadState()
+	if err != nil {
+		return ""
+	}
+	// Only show the local path when probing the locally managed server.
+	if !strings.EqualFold(strings.TrimRight(state.MCPURL, "/"), strings.TrimRight(endpoint, "/")) {
+		return ""
+	}
+	root := strings.TrimSpace(state.RootDir)
+	if root == "" {
+		root = resolveRootDir("", state.WorkDir)
+	}
+	if root == "" {
+		return ""
+	}
+	return filepath.Join(root, ".dir2mcp", "secret.token")
+}
+
+func isAuthRelatedError(s string) bool {
+	s = strings.ToLower(s)
+	return strings.Contains(s, "bearer token") ||
+		strings.Contains(s, "unauthorized") ||
+		strings.Contains(s, "401") ||
+		(strings.Contains(s, "missing") && strings.Contains(s, "token")) ||
+		(strings.Contains(s, "invalid") && strings.Contains(s, "token"))
 }
 
 func Down() error {
 	state, err := LoadState()
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			fmt.Println(ui.Dim("lighthouse: nothing to stop"))
+			fmt.Println(ui.Dim("mcp server: nothing to stop"))
 			return nil
 		}
 		return err
 	}
 	if !processAlive(state.PID) {
 		_ = ClearState()
-		fmt.Println(ui.Dim("lighthouse: process already stopped"))
+		fmt.Println(ui.Dim("mcp server: process already stopped"))
 		return nil
 	}
 	if err := terminateProcess(state.PID); err != nil {
 		return err
 	}
 	_ = ClearState()
-	fmt.Println(ui.Info("lighthouse:", fmt.Sprintf("stopped pid=%d", state.PID)))
+	fmt.Println(ui.Info("mcp server:", fmt.Sprintf("stopped pid=%d", state.PID)))
 	return nil
+}
+
+func sanitizeEndpointForLog(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	u, err := url.Parse(trimmed)
+	if err != nil {
+		return trimmed
+	}
+	u.User = nil
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String()
 }
 
 func SaveState(state State) error {
@@ -298,14 +413,14 @@ func SaveState(state State) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 	b, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, b, 0o644)
+	return os.WriteFile(path, b, 0o600)
 }
 
 func LoadState() (State, error) {
@@ -361,30 +476,100 @@ func resolveDir2MCPCommand() (command string, args []string, workDir string, err
 	if cwdErr != nil {
 		return "", nil, "", cwdErr
 	}
-	tryDirs := []string{
-		filepath.Join(cwd, "dir2mcp"),
-		filepath.Join(cwd, "..", "dir2mcp"),
+	tryDirs := []struct {
+		probeDir string
+		runDir   string
+	}{
+		{probeDir: filepath.Join(cwd, "cmd", "dir2mcp"), runDir: cwd},
+		{probeDir: filepath.Join(cwd, "..", "cmd", "dir2mcp"), runDir: filepath.Clean(filepath.Join(cwd, ".."))},
+		{probeDir: filepath.Join(cwd, "dir2mcp"), runDir: filepath.Join(cwd, "dir2mcp")},
+		{probeDir: filepath.Join(cwd, "..", "dir2mcp"), runDir: filepath.Join(cwd, "..", "dir2mcp")},
 	}
 	for _, d := range tryDirs {
-		if st, statErr := os.Stat(d); statErr == nil && st.IsDir() {
-			return "go", []string{"run", "./cmd/dir2mcp"}, d, nil
+		if st, statErr := os.Stat(d.probeDir); statErr == nil && st.IsDir() {
+			return "go", []string{"run", "./cmd/dir2mcp"}, d.runDir, nil
 		}
 	}
 	return "", nil, "", fmt.Errorf("could not locate dir2mcp binary or source directory")
 }
 
+func stopStartedCommand(cmd *exec.Cmd, pipes ...io.Closer) error {
+	if cmd == nil {
+		return nil
+	}
+	for _, pipe := range pipes {
+		if pipe == nil {
+			continue
+		}
+		_ = pipe.Close()
+	}
+	if cmd.Process == nil {
+		return nil
+	}
+	killErr := cmd.Process.Kill()
+	waitErr := cmd.Wait()
+	if killErr == nil && waitErr == nil {
+		return nil
+	}
+	if killErr != nil && errors.Is(killErr, os.ErrProcessDone) {
+		killErr = nil
+	}
+	if killErr == nil {
+		return waitErr
+	}
+	if waitErr == nil {
+		return killErr
+	}
+	return errors.Join(killErr, waitErr)
+}
+
 func terminateProcess(pid int) error {
+	if pid <= 0 {
+		return nil
+	}
 	proc, err := os.FindProcess(pid)
 	if err != nil {
 		return err
 	}
 	if runtime.GOOS == "windows" {
-		return proc.Kill()
+		if err := proc.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			return err
+		}
+		if waitForProcessExit(pid, 3*time.Second) {
+			return nil
+		}
+		return fmt.Errorf("process %d did not exit after kill", pid)
 	}
 	if err := proc.Signal(syscall.SIGINT); err != nil {
+		if errors.Is(err, os.ErrProcessDone) {
+			return nil
+		}
 		return err
 	}
-	return nil
+	if waitForProcessExit(pid, 4*time.Second) {
+		return nil
+	}
+	if err := proc.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		return err
+	}
+	if waitForProcessExit(pid, 2*time.Second) {
+		return nil
+	}
+	return fmt.Errorf("process %d did not terminate within timeout", pid)
+}
+
+func waitForProcessExit(pid int, timeout time.Duration) bool {
+	if timeout <= 0 {
+		timeout = time.Second
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if !processAlive(pid) {
+			return true
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return !processAlive(pid)
 }
 
 // HealthInfo describes the current state of a managed dir2mcp process.
@@ -399,6 +584,7 @@ type HealthInfo struct {
 	ProtocolHeader    string // configured MCP protocol header value
 	SessionHeaderName string // configured session header name
 	AuthSourceType    string // configured auth source type
+	AuthDiagnostic    string // diagnostic message for auth source
 	LastError         string // last readiness probe error (if any)
 }
 
@@ -412,12 +598,24 @@ func CheckHealth() HealthInfo {
 	reachable := false
 	mcpReady := false
 	lastErr := ""
+	protocolHeader, sessionHeaderName, authSourceType := readConnectionContractDetails(state)
+
+	token := resolveProbeToken(state)
+	authSourceType = strings.ToLower(strings.TrimSpace(authSourceType))
+	authDiagnostic := ""
+	if authSourceType != "" && authSourceType != "none" && authSourceType != "unknown" {
+		if !isSupportedAuthSource(authSourceType) {
+			authDiagnostic = "invalid/unknown auth source type: " + authSourceType
+		} else if token == "" {
+			authDiagnostic = "missing required auth token for contract type: " + authSourceType
+		}
+	}
+
 	if state.MCPURL != "" {
 		reachable = endpointReachable(state.MCPURL)
 		if reachable {
 			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 			defer cancel()
-			token := resolveProbeToken(state)
 			mcpReady, lastErr = probeMCPReady(ctx, state.MCPURL, token)
 		} else {
 			lastErr = "endpoint not reachable"
@@ -429,7 +627,6 @@ func CheckHealth() HealthInfo {
 	if !alive && lastErr == "" {
 		lastErr = "process not alive"
 	}
-	protocolHeader, sessionHeaderName, authSourceType := readConnectionContractDetails(state)
 	return HealthInfo{
 		Found:             true,
 		PID:               state.PID,
@@ -441,6 +638,7 @@ func CheckHealth() HealthInfo {
 		ProtocolHeader:    protocolHeader,
 		SessionHeaderName: sessionHeaderName,
 		AuthSourceType:    authSourceType,
+		AuthDiagnostic:    authDiagnostic,
 		LastError:         lastErr,
 	}
 }
@@ -457,12 +655,12 @@ func processAlive(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
+	if runtime.GOOS == "windows" {
+		return processAliveWindows(pid)
+	}
 	proc, err := os.FindProcess(pid)
 	if err != nil {
 		return false
-	}
-	if runtime.GOOS == "windows" {
-		return proc.Signal(syscall.Signal(0)) == nil
 	}
 	return proc.Signal(syscall.Signal(0)) == nil
 }
@@ -472,7 +670,27 @@ func endpointReachable(raw string) bool {
 	if err != nil {
 		return false
 	}
-	conn, err := net.DialTimeout("tcp", u.Host, 2*time.Second)
+	if strings.TrimSpace(u.Host) == "" {
+		u, err = url.Parse("http://" + raw)
+		if err != nil {
+			return false
+		}
+	}
+	hostname := strings.TrimSpace(u.Hostname())
+	if hostname == "" {
+		return false
+	}
+	port := strings.TrimSpace(u.Port())
+	if port == "" {
+		switch strings.ToLower(strings.TrimSpace(u.Scheme)) {
+		case "https":
+			port = "443"
+		default:
+			port = "80"
+		}
+	}
+	address := net.JoinHostPort(hostname, port)
+	conn, err := net.DialTimeout("tcp", address, 2*time.Second)
 	if err != nil {
 		return false
 	}
@@ -520,7 +738,7 @@ func effectiveListen(listen string, port int) string {
 func normalizeMCPPath(path string) string {
 	trimmed := strings.TrimSpace(path)
 	if trimmed == "" {
-		return "/mcp"
+		return config.DefaultHostMCPPath
 	}
 	if !strings.HasPrefix(trimmed, "/") {
 		return "/" + trimmed
@@ -548,12 +766,18 @@ func resolveRootDir(dirFlag, cmdDir string) string {
 	return cwd
 }
 
-func captureEndpoint(stop <-chan struct{}, pid int, rootDir string) {
+func captureEndpoint(stop <-chan struct{}, pid int, rootDir string, timeout, pollInterval time.Duration) {
 	if pid <= 0 || strings.TrimSpace(rootDir) == "" {
 		return
 	}
-	deadline := time.Now().Add(2 * time.Minute)
-	ticker := time.NewTicker(300 * time.Millisecond)
+	if timeout <= 0 {
+		timeout = defaultEndpointCaptureTimeout
+	}
+	if pollInterval <= 0 {
+		pollInterval = defaultEndpointCapturePollInterval
+	}
+	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -631,7 +855,7 @@ func readConnectionContractDetails(state State) (protocolHeader, sessionHeaderNa
 		return "", "", ""
 	}
 	if payload.Headers != nil {
-		protocolHeader = strings.TrimSpace(payload.Headers["MCP-Protocol-Version"])
+		protocolHeader = strings.TrimSpace(payload.Headers[protocol.MCPProtocolVersionHeader])
 	}
 	if payload.Session.UsesMCPSessionID {
 		sessionHeaderName = strings.TrimSpace(payload.Session.HeaderName)
@@ -642,6 +866,11 @@ func readConnectionContractDetails(state State) (protocolHeader, sessionHeaderNa
 
 func deriveAuthSourceType(tokenSource, tokenFile string) string {
 	source := strings.TrimSpace(tokenSource)
+	// "secret.token" is the label written by dir2mcp when using the
+	// .dir2mcp/secret.token file — normalise it to the canonical "file" type.
+	if strings.EqualFold(source, "secret.token") {
+		return "file"
+	}
 	if source != "" {
 		return source
 	}
@@ -697,10 +926,10 @@ func probeMCPReady(ctx context.Context, endpoint, token string) (bool, string) {
 }
 
 func initializeMCP(ctx context.Context, client *http.Client, endpoint, token string) (string, error) {
-	body, status, headers, err := rpcCall(ctx, client, endpoint, token, "", true, "initialize", map[string]any{
-		"protocolVersion": "2025-11-25",
+	body, status, headers, err := rpcCall(ctx, client, endpoint, token, "", true, protocol.RPCMethodInitialize, map[string]any{
+		"protocolVersion": protocol.DefaultProtocolVersion,
 		"capabilities":    map[string]any{"tools": map[string]any{}},
-		"clientInfo":      map[string]any{"name": "dirstral-lighthouse", "version": "0.1.0"},
+		"clientInfo":      map[string]any{"name": "dirstral-mcp-server", "version": buildinfo.Version},
 	})
 	if err != nil {
 		return "", fmt.Errorf("initialize failed: %w", err)
@@ -708,9 +937,9 @@ func initializeMCP(ctx context.Context, client *http.Client, endpoint, token str
 	if status < 200 || status >= 300 {
 		return "", fmt.Errorf("initialize failed with status %d", status)
 	}
-	sessionID := strings.TrimSpace(headers.Get("MCP-Session-Id"))
+	sessionID := strings.TrimSpace(headers.Get(protocol.MCPSessionHeader))
 	if sessionID == "" {
-		return "", fmt.Errorf("initialize missing MCP-Session-Id")
+		return "", fmt.Errorf("initialize missing %s", protocol.MCPSessionHeader)
 	}
 	if _, ok := body["result"].(map[string]any); !ok {
 		return "", fmt.Errorf("initialize returned invalid payload")
@@ -719,7 +948,7 @@ func initializeMCP(ctx context.Context, client *http.Client, endpoint, token str
 }
 
 func notifyInitialized(ctx context.Context, client *http.Client, endpoint, token, sessionID string) error {
-	_, status, _, err := rpcCall(ctx, client, endpoint, token, sessionID, false, "notifications/initialized", map[string]any{})
+	_, status, _, err := rpcCall(ctx, client, endpoint, token, sessionID, false, protocol.RPCMethodNotificationsInitialized, map[string]any{})
 	if err != nil {
 		return fmt.Errorf("notifications/initialized failed: %w", err)
 	}
@@ -730,7 +959,7 @@ func notifyInitialized(ctx context.Context, client *http.Client, endpoint, token
 }
 
 func listTools(ctx context.Context, client *http.Client, endpoint, token, sessionID string) error {
-	body, status, _, err := rpcCall(ctx, client, endpoint, token, sessionID, true, "tools/list", map[string]any{})
+	body, status, _, err := rpcCall(ctx, client, endpoint, token, sessionID, true, protocol.RPCMethodToolsList, map[string]any{})
 	if err != nil {
 		return fmt.Errorf("tools/list failed: %w", err)
 	}
@@ -765,13 +994,13 @@ func rpcCall(ctx context.Context, client *http.Client, endpoint, token, sessionI
 		return nil, 0, nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("MCP-Protocol-Version", "2025-11-25")
+	req.Header.Set(protocol.MCPProtocolVersionHeader, protocol.DefaultProtocolVersion)
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	if sessionID != "" {
-		req.Header.Set("MCP-Session-Id", sessionID)
+		req.Header.Set(protocol.MCPSessionHeader, sessionID)
 	}
 
 	resp, err := client.Do(req)
@@ -801,4 +1030,13 @@ func rpcCall(ctx context.Context, client *http.Client, endpoint, token, sessionI
 		return nil, resp.StatusCode, resp.Header, fmt.Errorf("json-rpc error %d: %s", code, msg)
 	}
 	return envelope, resp.StatusCode, resp.Header, nil
+}
+
+func isSupportedAuthSource(s string) bool {
+	switch s {
+	case "env", "keychain", "file", "secret", "prompt", "contract":
+		return true
+	default:
+		return false
+	}
 }

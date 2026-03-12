@@ -3,10 +3,13 @@ package settings
 
 import (
 	"fmt"
+	"log"
 	"strings"
+	"time"
 
-	"github.com/alibilge/dirstral-cli/internal/config"
-	"github.com/alibilge/dirstral-cli/internal/ui"
+	"github.com/dirstral/dirstral-cli/internal/config"
+	"github.com/dirstral/dirstral-cli/internal/host"
+	"github.com/dirstral/dirstral-cli/internal/ui"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -37,6 +40,7 @@ type model struct {
 	width                int
 	height               int
 	showHelp             bool
+	cachedHealth         *host.HealthInfo
 }
 
 func initialModel(cfg config.Config) model {
@@ -71,12 +75,30 @@ func Run(cfg config.Config) error {
 	return err
 }
 
+type healthMsg *host.HealthInfo
+
+func tickHealth() tea.Cmd {
+	return tea.Tick(5*time.Second, func(t time.Time) tea.Msg {
+		h := host.CheckHealth()
+		return healthMsg(&h)
+	})
+}
+
 func (m model) Init() tea.Cmd {
-	return nil
+	return tea.Batch(
+		func() tea.Msg {
+			h := host.CheckHealth()
+			return healthMsg(&h)
+		},
+		tickHealth(),
+	)
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case healthMsg:
+		m.cachedHealth = (*host.HealthInfo)(msg)
+		return m, tickHealth()
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -142,7 +164,10 @@ func (m model) handleBrowsingKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.errMsg = ""
 	case "enter":
 		m.startEditing()
-		return m, m.input.Focus()
+		if m.state == stateEditing {
+			return m, m.input.Focus()
+		}
+		return m, nil
 	case "r":
 		m.resetField()
 	case "s":
@@ -151,7 +176,17 @@ func (m model) handleBrowsingKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m model) hasValidCursorField() bool {
+	return len(m.fields) > 0 && m.cursor >= 0 && m.cursor < len(m.fields)
+}
+
 func (m *model) startEditing() {
+	if !m.hasValidCursorField() {
+		m.state = stateBrowsing
+		m.errMsg = "No editable field selected"
+		m.statusMsg = ""
+		return
+	}
 	f := m.fields[m.cursor]
 	m.state = stateEditing
 	m.errMsg = ""
@@ -179,6 +214,12 @@ func (m model) handleEditingKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
+	if !m.hasValidCursorField() {
+		m.state = stateBrowsing
+		m.input.Blur()
+		m.errMsg = "Selected field is no longer available"
+		return m, nil
+	}
 	// Live validation feedback.
 	val := m.input.Value()
 	if err := config.ValidateField(m.fields[m.cursor].Key, val); err != nil {
@@ -190,6 +231,13 @@ func (m model) handleEditingKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) commitEdit() (tea.Model, tea.Cmd) {
+	if !m.hasValidCursorField() {
+		m.state = stateBrowsing
+		m.input.Blur()
+		m.errMsg = "No editable field selected"
+		m.statusMsg = ""
+		return m, nil
+	}
 	key := m.fields[m.cursor].Key
 	val := m.input.Value()
 	changed := m.fields[m.cursor].Value != val
@@ -223,6 +271,11 @@ func (m model) commitEdit() (tea.Model, tea.Cmd) {
 }
 
 func (m *model) resetField() {
+	if !m.hasValidCursorField() {
+		m.errMsg = "No field selected"
+		m.statusMsg = ""
+		return
+	}
 	f := &m.fields[m.cursor]
 	def := config.DefaultValueForField(f.Key)
 	if def == "" && f.Sensitive {
@@ -251,13 +304,26 @@ func (m *model) save() {
 
 	// Save secrets to .env.local.
 	secretFailures := make([]string, 0)
+	failedSecretKeys := map[string]bool{}
 	for _, f := range m.fields {
 		if !f.Sensitive {
 			continue
 		}
 		envKey := config.EnvVarForField(f.Key)
 		if envKey == "" {
-			envKey = f.Key
+			log.Printf("settings: no environment mapping for %s; skipping secret save", f.Key)
+			failedSecretKeys[f.Key] = true
+			secretFailures = append(secretFailures, fmt.Sprintf("%s: no mapped environment variable", f.Key))
+			continue
+		}
+		storedSecret, loadErr := config.LoadSecret(envKey)
+		if loadErr != nil {
+			failedSecretKeys[f.Key] = true
+			secretFailures = append(secretFailures, fmt.Sprintf("%s: %v", f.Key, loadErr))
+			continue
+		}
+		if strings.TrimSpace(storedSecret) == strings.TrimSpace(f.Value) {
+			continue
 		}
 		var err error
 		if strings.TrimSpace(f.Value) == "" {
@@ -266,16 +332,31 @@ func (m *model) save() {
 			err = config.SaveSecret(envKey, f.Value)
 		}
 		if err != nil {
+			failedSecretKeys[f.Key] = true
 			secretFailures = append(secretFailures, fmt.Sprintf("%s: %v", f.Key, err))
 		}
 	}
 	if len(secretFailures) > 0 {
+		m.applyPersistedSources(failedSecretKeys)
+
+		newBaseline := snapshotValues(m.fields)
+		for key := range failedSecretKeys {
+			if oldValue, ok := m.baseline[key]; ok {
+				newBaseline[key] = oldValue
+			} else {
+				delete(newBaseline, key)
+			}
+		}
+		m.baseline = newBaseline
+		m.invalidatePendingChanges()
+		m.recomputeDirty()
+
 		m.errMsg = fmt.Sprintf("Save secrets failed for %s. Some changes may have been saved.", strings.Join(secretFailures, "; "))
 		m.statusMsg = ""
 		return
 	}
 
-	m.applyPersistedSources()
+	m.applyPersistedSources(nil)
 
 	m.baseline = snapshotValues(m.fields)
 	m.invalidatePendingChanges()
@@ -321,13 +402,16 @@ func (m *model) recomputeDirty() {
 	m.dirty = len(m.pendingChanges()) > 0
 }
 
-func (m *model) applyPersistedSources() {
+func (m *model) applyPersistedSources(failedSecretKeys map[string]bool) {
 	for i := range m.fields {
 		before := m.baseline[m.fields[i].Key]
 		if m.fields[i].Value == before {
 			continue
 		}
 		if m.fields[i].Sensitive {
+			if failedSecretKeys != nil && failedSecretKeys[m.fields[i].Key] {
+				continue
+			}
 			if strings.TrimSpace(m.fields[i].Value) == "" {
 				m.fields[i].Source = config.SourceDefault
 			} else {
@@ -523,6 +607,10 @@ func (m model) stateLines() []string {
 
 	switch m.state {
 	case stateEditing:
+		if !m.hasValidCursorField() {
+			lines = append(lines, ui.Red.Render("Selected field is out of range."))
+			break
+		}
 		lines = append(lines, settingsMutedStyle.Render("Editing "+m.fields[m.cursor].Key))
 		lines = append(lines, "  "+m.input.View())
 		if m.errMsg != "" {
@@ -545,6 +633,11 @@ func (m model) stateLines() []string {
 		lines = append(lines, pending...)
 		if len(pending) > 0 {
 			lines = append(lines, settingsSubtleStyle.Render("Source labels update after save."))
+		}
+
+		// Issue 78: Show auth contract details
+		if m.cachedHealth != nil && m.cachedHealth.AuthSourceType != "" && m.cachedHealth.AuthSourceType != "unknown" {
+			lines = append(lines, settingsSubtleStyle.Render(fmt.Sprintf("Active auth contract: %s", m.cachedHealth.AuthSourceType)))
 		}
 	}
 

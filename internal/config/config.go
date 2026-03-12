@@ -4,13 +4,26 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
+	"github.com/dirstral/dirstral-cli/internal/protocol"
 	"github.com/BurntSushi/toml"
 	"github.com/joho/godotenv"
 )
+
+const (
+	DefaultHostListen   = "127.0.0.1:8087"
+	DefaultHostMCPPath  = protocol.DefaultMCPPath
+	DefaultMCPURL       = "http://" + protocol.DefaultListenAddr + protocol.DefaultMCPPath
+	DefaultMCPTransport = protocol.DefaultTransport
+	DefaultModel        = protocol.DefaultModel
+)
+
+var DefaultProtocolVersion = protocol.DefaultProtocolVersion
 
 // FieldSource indicates where a config value originates.
 type FieldSource string
@@ -57,18 +70,18 @@ type HostConfig struct {
 func Default() Config {
 	return Config{
 		MCP: MCPConfig{
-			URL:       "http://127.0.0.1:8087/mcp",
-			Transport: "streamable-http",
+			URL:       DefaultMCPURL,
+			Transport: DefaultMCPTransport,
 		},
-		Model:   "mistral-small-latest",
+		Model:   DefaultModel,
 		Verbose: false,
 		ElevenLabs: ElevenLabsConfig{
 			BaseURL: "https://api.elevenlabs.io",
 			Voice:   "Rachel",
 		},
 		Host: HostConfig{
-			Listen:  "127.0.0.1:8087",
-			MCPPath: "/mcp",
+			Listen:  DefaultHostListen,
+			MCPPath: DefaultHostMCPPath,
 		},
 	}
 }
@@ -92,25 +105,52 @@ func StateDir() (string, error) {
 		return "", err
 	}
 	dir := filepath.Join(base, "dirstral")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
 	return dir, nil
 }
 
+func secretEnvLocalPath() (string, error) {
+	dir, err := StateDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, ".env.local"), nil
+}
+
+func dotEnvPaths(name string) []string {
+	if strings.TrimSpace(name) != ".env.local" {
+		return []string{name}
+	}
+	paths := make([]string, 0, 2)
+	if secretPath, err := secretEnvLocalPath(); err == nil {
+		paths = append(paths, secretPath)
+	}
+	paths = append(paths, name)
+	return paths
+}
+
+func writeDotEnvFile(path string, env map[string]string) error {
+	content, err := godotenv.Marshal(env)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(content), 0o600)
+}
+
 func loadDotEnvPrecedence() error {
-	for _, name := range []string{".env", ".env.local"} {
-		values, err := godotenv.Read(name)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
+	for _, name := range []string{".env.local", ".env"} {
+		for _, path := range dotEnvPaths(name) {
+			values, err := godotenv.Read(path)
+			if err != nil {
 				continue
 			}
-			continue
-		}
-		for k, v := range values {
-			if _, exists := os.LookupEnv(k); !exists {
-				if setErr := os.Setenv(k, v); setErr != nil {
-					return setErr
+			for k, v := range values {
+				if _, exists := os.LookupEnv(k); !exists {
+					if setErr := os.Setenv(k, v); setErr != nil {
+						return setErr
+					}
 				}
 			}
 		}
@@ -184,42 +224,69 @@ func Save(cfg Config) error {
 	if err := enc.Encode(cfg); err != nil {
 		return fmt.Errorf("encoding config: %w", err)
 	}
-	return os.WriteFile(path, buf.Bytes(), 0o644)
+	return os.WriteFile(path, buf.Bytes(), 0o600)
 }
 
-// SaveSecret writes a key=value pair into .env.local.
+// SaveSecret writes a key=value pair into ~/.config/dirstral/.env.local.
 // If the key already exists it is updated; otherwise it is appended.
 // The environment variable is also set in the current process.
 func SaveSecret(key, value string) error {
-	const path = ".env.local"
+	path, err := secretEnvLocalPath()
+	if err != nil {
+		return err
+	}
 	env := map[string]string{}
 	existing, err := godotenv.Read(path)
 	if err == nil {
 		env = existing
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("reading %s: %w", path, err)
 	}
 	env[key] = value
-	if err := godotenv.Write(env, path); err != nil {
+	if err := writeDotEnvFile(path, env); err != nil {
 		return fmt.Errorf("writing %s: %w", path, err)
 	}
 	return os.Setenv(key, value)
 }
 
-// DeleteSecret removes a key from .env.local and unsets it in the process env.
+// DeleteSecret removes a key from ~/.config/dirstral/.env.local and unsets it in the process env.
 func DeleteSecret(key string) error {
-	const path = ".env.local"
+	path, err := secretEnvLocalPath()
+	if err != nil {
+		return err
+	}
 	env := map[string]string{}
 	existing, err := godotenv.Read(path)
 	if err == nil {
 		env = existing
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("reading %s: %w", path, err)
 	}
 	delete(env, key)
-	if err := godotenv.Write(env, path); err != nil {
+	if err := writeDotEnvFile(path, env); err != nil {
 		return fmt.Errorf("writing %s: %w", path, err)
 	}
 	if err := os.Unsetenv(key); err != nil {
 		return fmt.Errorf("unsetting %s: %w", key, err)
 	}
 	return nil
+}
+
+// LoadSecret returns the stored secret value from ~/.config/dirstral/.env.local.
+// It returns an empty string when the file or key does not exist.
+func LoadSecret(key string) (string, error) {
+	path, err := secretEnvLocalPath()
+	if err != nil {
+		return "", err
+	}
+	env, err := godotenv.Read(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", nil
+		}
+		return "", fmt.Errorf("reading %s: %w", path, err)
+	}
+	return strings.TrimSpace(env[key]), nil
 }
 
 // fieldDef describes a configurable field for EffectiveFields.
@@ -282,11 +349,24 @@ func fieldValueFromConfig(cfg Config, key string) string {
 // readDotFile reads a dotenv file and returns its key-value pairs.
 // Returns nil map if the file does not exist.
 func readDotFile(name string) map[string]string {
-	vals, err := godotenv.Read(name)
-	if err != nil {
+	out := map[string]string{}
+	found := false
+	for _, path := range dotEnvPaths(name) {
+		vals, err := godotenv.Read(path)
+		if err != nil {
+			continue
+		}
+		found = true
+		for key, value := range vals {
+			if _, exists := out[key]; !exists {
+				out[key] = value
+			}
+		}
+	}
+	if !found {
 		return nil
 	}
-	return vals
+	return out
 }
 
 // EffectiveFields returns info about each configurable field including
@@ -297,10 +377,13 @@ func EffectiveFields(cfg Config) []FieldInfo {
 	dotEnv := readDotFile(".env")
 
 	// Load config.toml into a separate struct to check overrides.
-	fileCfg := Default()
-	_ = mergeUserConfig(&fileCfg)
-
 	def := Default()
+	fileCfg := def
+	if err := mergeUserConfig(&fileCfg); err != nil {
+		// EffectiveFields is an observability helper. If config.toml is malformed,
+		// continue with defaults/env provenance rather than failing the UI status view.
+		fileCfg = def
+	}
 	result := make([]FieldInfo, 0, len(fieldDefs))
 
 	for _, fd := range fieldDefs {
@@ -384,8 +467,19 @@ func ValidateField(key, value string) error {
 			return fmt.Errorf("verbose must be \"true\" or \"false\", got %q", value)
 		}
 	case "host.listen":
-		if !strings.Contains(value, ":") {
-			return errors.New("host.listen must contain \":\" (e.g. \"127.0.0.1:8087\")")
+		_, port, err := net.SplitHostPort(strings.TrimSpace(value))
+		if err != nil {
+			return fmt.Errorf("host.listen must be host:port (e.g. %q): %w", DefaultHostListen, err)
+		}
+		if strings.TrimSpace(port) == "" {
+			return fmt.Errorf("host.listen must include a non-empty port (e.g. %q)", DefaultHostListen)
+		}
+		portNumber, err := strconv.Atoi(port)
+		if err != nil || portNumber < 0 || portNumber > 65535 {
+			if err != nil {
+				return fmt.Errorf("host.listen must use a valid numeric port (e.g. %q): %w", DefaultHostListen, err)
+			}
+			return fmt.Errorf("host.listen port out of range in %q (e.g. %q)", value, DefaultHostListen)
 		}
 	case "host.mcp_path":
 		if !strings.HasPrefix(value, "/") {

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/alibilge/dirstral-cli/internal/app"
+	"github.com/dirstral/dirstral-cli/internal/app"
 )
 
 func main() {

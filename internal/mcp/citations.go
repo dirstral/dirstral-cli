@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 )
@@ -37,17 +38,52 @@ func formatMs(ms int) string {
 }
 
 func intVal(v any) int {
+	const maxInt = int(^uint(0) >> 1)
+	const minInt = -maxInt - 1
+
 	switch t := v.(type) {
 	case int:
 		return t
+	case int32:
+		return int(t)
 	case int64:
+		if t > int64(maxInt) {
+			return maxInt
+		}
+		if t < int64(minInt) {
+			return minInt
+		}
+		return int(t)
+	case uint:
+		if t > uint(maxInt) {
+			return maxInt
+		}
+		return int(t)
+	case uint32:
+		return int(t)
+	case uint64:
+		if t > uint64(maxInt) {
+			return maxInt
+		}
 		return int(t)
 	case float64:
 		return int(t)
+	case json.Number:
+		if i, err := t.Int64(); err == nil {
+			if i > int64(maxInt) {
+				return maxInt
+			}
+			if i < int64(minInt) {
+				return minInt
+			}
+			return int(i)
+		}
+		if f, err := t.Float64(); err == nil {
+			return int(f)
+		}
 	case string:
 		i, _ := strconv.Atoi(t)
 		return i
-	default:
-		return 0
 	}
+	return 0
 }
