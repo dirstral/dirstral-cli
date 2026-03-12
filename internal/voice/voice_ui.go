@@ -9,7 +9,7 @@ import (
 
 	"github.com/dirstral/dirstral-cli/internal/chat"
 	"github.com/dirstral/dirstral-cli/internal/mcp"
-	"github.com/dirstral/dirstral-spec/protocol"
+	"github.com/dirstral/dirstral-cli/internal/protocol"
 	"github.com/dirstral/dirstral-cli/internal/ui"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
