@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/dirstral/dirstral-cli/internal/host"
-	"github.com/dirstral/dirstral-cli/internal/protocol"
+	"github.com/dirstral/dirstral-spec/protocol"
 )
 
 func TestSmokeServerLifecycleWithFakeDir2MCP(t *testing.T) {

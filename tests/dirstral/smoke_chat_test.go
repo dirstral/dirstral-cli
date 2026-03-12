@@ -12,7 +12,7 @@ import (
 
 	"github.com/dirstral/dirstral-cli/internal/chat"
 	"github.com/dirstral/dirstral-cli/internal/mcp"
-	"github.com/dirstral/dirstral-cli/internal/protocol"
+	"github.com/dirstral/dirstral-spec/protocol"
 )
 
 func TestSmokeChatJSONOverStdio(t *testing.T) {

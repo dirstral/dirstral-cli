@@ -13,7 +13,7 @@ import (
 	"github.com/dirstral/dirstral-cli/internal/app"
 	"github.com/dirstral/dirstral-cli/internal/config"
 	"github.com/dirstral/dirstral-cli/internal/host"
-	"github.com/dirstral/dirstral-cli/internal/protocol"
+	"github.com/dirstral/dirstral-spec/protocol"
 )
 
 func TestBuildVoiceOptionsPrefersFlags(t *testing.T) {

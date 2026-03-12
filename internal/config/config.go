@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/dirstral/dirstral-cli/internal/protocol"
+	"github.com/dirstral/dirstral-spec/protocol"
 	"github.com/BurntSushi/toml"
 	"github.com/joho/godotenv"
 )

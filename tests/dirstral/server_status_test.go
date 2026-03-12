@@ -15,7 +15,7 @@ import (
 	"testing"
 
 	"github.com/dirstral/dirstral-cli/internal/host"
-	"github.com/dirstral/dirstral-cli/internal/protocol"
+	"github.com/dirstral/dirstral-spec/protocol"
 )
 
 func TestComputeMCPURLDeterministic(t *testing.T) {

@@ -16,7 +16,7 @@ import (
 	"github.com/dirstral/dirstral-cli/internal/config"
 	"github.com/dirstral/dirstral-cli/internal/host"
 	"github.com/dirstral/dirstral-cli/internal/mcp"
-	"github.com/dirstral/dirstral-cli/internal/protocol"
+	"github.com/dirstral/dirstral-spec/protocol"
 )
 
 func TestModeFlowSmokeServerToChatToVoiceHandoff(t *testing.T) {
