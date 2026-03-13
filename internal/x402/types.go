@@ -178,12 +178,12 @@ func NormalizeMode(mode string) string {
 	}
 }
 
+// IsModeValid reports whether mode is one of the recognised constants
+// (ModeOff, ModeOn, ModeRequired). Unlike NormalizeMode, it does not default
+// unknown or empty input — the empty string returns false. Use NormalizeMode
+// when defaulting behaviour is wanted; use IsModeValid when validating
+// user-supplied configuration.
 func IsModeValid(mode string) bool {
-	// Validate the raw input rather than normalising it.  With the
-	// new behaviour of NormalizeMode the previous implementation would
-	// always return true, which made the helper useless.  Keeping this
-	// logic separate lets callers detect and reject bad configuration
-	// while still using NormalizeMode for runtime decisions.
 	m := strings.ToLower(strings.TrimSpace(mode))
 	switch m {
 	case ModeOff, ModeOn, ModeRequired:
@@ -242,9 +242,6 @@ type FacilitatorError struct {
 }
 
 func (e *FacilitatorError) Error() string {
-	if e == nil {
-		return "<nil FacilitatorError>"
-	}
 	if e.Code == "" && e.Message == "" {
 		return "facilitator request failed"
 	}
@@ -258,8 +255,5 @@ func (e *FacilitatorError) Error() string {
 }
 
 func (e *FacilitatorError) Unwrap() error {
-	if e == nil {
-		return nil
-	}
 	return e.Cause
 }
