@@ -112,7 +112,7 @@ func (r Requirement) Validate() error {
 		return fmt.Errorf("x402 asset is required")
 	}
 	if strings.TrimSpace(r.PayTo) == "" {
-		return fmt.Errorf("x402 pay_to is required")
+		return fmt.Errorf("x402 payTo is required")
 	}
 	if strings.TrimSpace(r.Resource) == "" {
 		return fmt.Errorf("x402 resource is required")
@@ -202,8 +202,8 @@ func IsModeEnabled(mode string) bool {
 	}
 }
 
-// IsCAIP2Network validates a conservative CAIP-2 identifier shape:
-// <namespace>:<reference>
+// IsCAIP2Network validates a CAIP-2 identifier of the form
+// <namespace>:<reference>, matching ^[-a-z0-9]{3,8}:[-_a-zA-Z0-9]{1,32}$.
 func IsCAIP2Network(network string) bool {
 	network = strings.TrimSpace(network)
 	parts := strings.Split(network, ":")
@@ -213,12 +213,12 @@ func IsCAIP2Network(network string) bool {
 
 	ns := parts[0]
 	ref := parts[1]
-	if len(ns) == 0 || len(ns) > 32 || len(ref) == 0 || len(ref) > 128 {
+	if len(ns) < 3 || len(ns) > 8 || len(ref) == 0 || len(ref) > 32 {
 		return false
 	}
 
 	for _, r := range ns {
-		if (r < 'a' || r > 'z') && (r < '0' || r > '9') {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
 			return false
 		}
 	}
