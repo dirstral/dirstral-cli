@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/dirstral/dirstral-cli/internal/mcp"
-	"github.com/dirstral/dirstral-spec/protocol"
+	"github.com/dirstral/dirstral-cli/internal/protocol"
 	"github.com/dirstral/dirstral-cli/internal/ui"
 )
 

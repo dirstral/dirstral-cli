@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/dirstral/dirstral-cli/internal/mcp"
-	"github.com/dirstral/dirstral-spec/protocol"
+	"github.com/dirstral/dirstral-cli/internal/protocol"
 )
 
 func TestMCPClientStdioInitializeAndCall(t *testing.T) {

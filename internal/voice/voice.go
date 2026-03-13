@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/dirstral/dirstral-cli/internal/mcp"
-	"github.com/dirstral/dirstral-spec/protocol"
+	"github.com/dirstral/dirstral-cli/internal/protocol"
 	tea "github.com/charmbracelet/bubbletea"
 )
 

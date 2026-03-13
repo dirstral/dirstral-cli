@@ -23,7 +23,7 @@ import (
 
 	"github.com/dirstral/dirstral-cli/internal/buildinfo"
 	"github.com/dirstral/dirstral-cli/internal/config"
-	"github.com/dirstral/dirstral-spec/protocol"
+	"github.com/dirstral/dirstral-cli/internal/protocol"
 	"github.com/dirstral/dirstral-cli/internal/ui"
 )
 

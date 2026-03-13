@@ -10,8 +10,8 @@ import (
 	"testing"
 
 	"github.com/dirstral/dirstral-cli/internal/mcp"
-	"github.com/dirstral/dirstral-spec/protocol"
-	"github.com/dirstral/dirstral-spec/x402"
+	"github.com/dirstral/dirstral-cli/internal/protocol"
+	"github.com/dirstral/dirstral-cli/internal/x402"
 )
 
 func TestCanonicalCodeFromError(t *testing.T) {
