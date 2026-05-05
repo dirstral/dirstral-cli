@@ -1,0 +1,12 @@
+project_name: dirstral-cli
+release:
+  prerelease: auto
+builds:
+  - id: dirstral
+    main: ./cmd/dirstral
+    binary: dirstral
+archives:
+  - formats: ["tar.gz"]
+    files:
+      - LICENSE
+      - README.md
