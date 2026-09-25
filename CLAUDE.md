@@ -10,7 +10,7 @@ TUI (Cobra + Bubble Tea) plus a settings editor.
 
 It is a standalone client/orchestrator: it composes with servers **only over
 the MCP protocol boundary** (stdio or streamable-http). It must not import
-`dir2mcp` (or any server) implementation internals — see `README.md`.
+`dir2mcp` (or any server) implementation internals: see `README.md`.
 
 ## Repository layout
 
@@ -51,7 +51,7 @@ Config is resolved with precedence: env var → `.env.local` → `.env` →
 `config.toml` → built-in default.
 
 - `config.toml`: `~/.config/dirstral/config.toml` (`os.UserConfigDir()`)
-- Secrets: `~/.config/dirstral/.env.local` (written `0600` — never commit)
+- Secrets: `~/.config/dirstral/.env.local` (written `0600`; never commit)
 - Keys: `mcp.url`, `mcp.transport` (`streamable-http`|`stdio`), `model`,
   `verbose`, `host.listen`, `host.mcp_path`, `elevenlabs.base_url`,
   `elevenlabs.voice`
@@ -65,7 +65,7 @@ Config is resolved with precedence: env var → `.env.local` → `.env` →
 
 ## Subcommands
 
-- `dirstral` (no args): interactive TUI menu — Chat, Voice, MCP Server, Settings, Exit
+- `dirstral` (no args): interactive TUI menu (Chat, Voice, MCP Server, Settings, Exit)
 - `dirstral chat`: chat mode (`--mcp`, `--transport`, `--model`, `--verbose`, `--json`)
 - `dirstral voice`: voice mode (`--mcp`, `--voice`, `--device`, `--mute`, `--elevenlabs-base-url`, `--verbose`)
 - `dirstral server start|status|stop|remote`: manage local `dir2mcp` host / probe remote MCP
@@ -100,7 +100,7 @@ Release artifacts are produced by GoReleaser (`.goreleaser.yml`): project
 
 ## Known gotchas
 
-- No Makefile — use raw `go` commands (and `golangci-lint` for lint).
+- No Makefile: use raw `go` commands (and `golangci-lint` for lint).
 - Running `dirstral` with no subcommand launches the interactive TUI menu, not
   usage text; use `dirstral --help` / `dirstral <cmd> --help` for help (Cobra).
 - `server start` needs a `dir2mcp` binary on `PATH`; otherwise it falls back to

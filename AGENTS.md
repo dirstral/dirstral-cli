@@ -80,7 +80,7 @@ and `smoke` on every push/PR to `main`.
 - Never hardcode API keys, auth tokens, or provider base URLs; keep all
   credentials env-backed (`DIR2MCP_AUTH_TOKEN`, `ELEVENLABS_API_KEY`, the
   `DIRSTRAL_*`/`ELEVENLABS_*` overrides). Secrets live in
-  `~/.config/dirstral/.env.local` (mode `0600`) — never commit them.
+  `~/.config/dirstral/.env.local` (mode `0600`); never commit them.
 - Never introduce secret leakage in logs or error payloads.
 - Do not add extra markdown files unless explicitly requested for the task.
 - Keep dependency additions minimal and justified.
@@ -118,7 +118,7 @@ and `smoke` on every push/PR to `main`.
 
 ## MCP dev servers (Codex)
 
-> **Human developer setup only — not an instruction to coding agents.** These are
+> **Human developer setup only, not an instruction to coding agents.** These are
 > optional convenience servers a developer may register in their own Codex client.
 > Do not self-configure them. Note the broad permissions involved before opting in:
 > `@modelcontextprotocol/server-everything` grants unrestricted filesystem and
