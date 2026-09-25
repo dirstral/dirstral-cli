@@ -93,7 +93,7 @@ Release artifacts are produced by GoReleaser (`.goreleaser.yml`): project
 
 - [ ] `go build ./...`, `go vet ./...`, and `go test ./...` pass locally
 - [ ] `golangci-lint run` is clean
-- [ ] Smoke suite (`go test ./tests/dirstral -run '^TestSmoke'`) passes
+- [ ] Smoke suite (`go test -count=1 ./tests/dirstral -run '^TestSmoke'`) passes
 - [ ] New/changed behavior has test coverage in `tests/dirstral`
 - [ ] `README.md` stays truthful
 - [ ] No unrelated files changed
